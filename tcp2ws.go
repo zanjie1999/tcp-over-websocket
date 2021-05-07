@@ -13,6 +13,7 @@ import (
 	"os"
 	"fmt"
 	"regexp"
+	"strconv"
 )
 
 var (
@@ -29,84 +30,79 @@ var upgrader = websocket.Upgrader{
 }
 
 func ReadTcp2Ws(id string, tcpConn net.Conn, wsConn *websocket.Conn) {
-	buf := make([]byte, 1024)
-	length,err := tcpConn.Read(buf)
-	if err != nil {
-		log.Print(id, "tcp read err", err)
-		wsConn.Close()
-		tcpConn.Close()
-		boom <- 1
-		return
-	}
-	if length > 0 {
-		if err = wsConn.WriteMessage(websocket.BinaryMessage, buf[:length]);err != nil{
-			log.Print(id, "ws write err", err)
-			tcpConn.Close()
+	buf := make([]byte, 10240)
+	for {
+		length,err := tcpConn.Read(buf)
+		if err != nil {
+			log.Print(id, " tcp read err: ", err)
 			wsConn.Close()
-			boom <- 1
+			tcpConn.Close()
 			return
 		}
-		log.Print(id, "recv tcp : ", string(buf[:length]))
+		if length > 0 {
+			if err = wsConn.WriteMessage(websocket.BinaryMessage, buf[:length]);err != nil{
+				log.Print(id, " ws write err: ", err)
+				tcpConn.Close()
+				wsConn.Close()
+				return
+			}
+			// log.Print(id, "recv tcp : ", string(buf[:length]))
+			log.Print(id, " recv tcp : ", length)
+		}
 	}
 }
 
 func ReadWs2Tcp(id string, tcpConn net.Conn, wsConn *websocket.Conn) {
-	t, buf, err := wsConn.ReadMessage()
-	if err != nil || t == -1 {
-		log.Print(id, "ws read err", err)
-		wsConn.Close()
-		tcpConn.Close()
-		boom <- 1
-		return
-	}
-	if len(buf) > 0 {
-		msg_type = t
-		if _, err = tcpConn.Write(buf);err != nil{
-			log.Print(id, "tcp write err", err)
-			tcpConn.Close()
+	for {
+		t, buf, err := wsConn.ReadMessage()
+		if err != nil || t == -1 {
+			log.Print(id, " ws read err: ", err)
 			wsConn.Close()
-			boom <- 1
+			tcpConn.Close()
 			return
 		}
-		log.Print(id, "recv ws : ", string(buf))		
+		if len(buf) > 0 {
+			msg_type = t
+			if _, err = tcpConn.Write(buf);err != nil{
+				log.Print(id, " tcp write err: ", err)
+				tcpConn.Close()
+				wsConn.Close()
+				return
+			}
+			// log.Print(id, "recv ws: ", string(buf))
+			log.Print(id, " recv ws: ", len(buf))		
+		}
 	}
 }
 
 func RunServer(wsConn *websocket.Conn) {
 	conn_num += 1
-	id := string(conn_num)
-	log.Print("new ws conn ", id, wsConn.RemoteAddr().String)
+	id := strconv.Itoa(conn_num)
+	log.Print("new ws conn: ", id, wsConn.RemoteAddr().String)
+	// call tcp
 	tcpConn, err := net.Dial("tcp", tcp_addr)
 	if(err != nil) {
-		log.Print("connect to tcp", err)
+		log.Print("connect to tcp err: ", err)
 		return
 	}
 	
-	for {
-		boom = make(chan int)
-		go ReadWs2Tcp(id, tcpConn, wsConn)
-		ReadTcp2Ws(id, tcpConn, wsConn)
-		if <- boom.After(1) {
-			break
-		}
-	}
+	go ReadWs2Tcp(id, tcpConn, wsConn)
+	go ReadTcp2Ws(id, tcpConn, wsConn)
 }
 
 func RunConnect(tcpConn net.Conn) {
 	conn_num += 1
-	id := string(conn_num)
-	log.Print("new tcp conn ", id)
-	tcpConn, err := net.Dial("tcp", tcp_addr)
-	if(err != nil) {
-		log.Print("connect to tcp", err)
-		return
-	}
+	id := strconv.Itoa(conn_num)
+	log.Print("new tcp conn: ", id)
+	// call ws
+	wsConn, _, err := websocket.DefaultDialer.Dial(ws_addr, nil)
+	if err != nil {
+		log.Fatal("connect to ws err: ", err)
+		wsConn.Close()
+	}	
 	
-	// for {
-	// 	if !ReadWs2Tcp(id, tcpConn, wsConn) || !ReadTcp2Ws(id, tcpConn, wsConn) {
-	// 		break
-	// 	}
-	// }
+	go ReadWs2Tcp(id, tcpConn, wsConn)
+	go ReadTcp2Ws(id, tcpConn, wsConn)
 }
 
 
@@ -126,43 +122,45 @@ func wsHandler(w http.ResponseWriter , r *http.Request){
 
 // 响应tcp
 func tcpHandler(listener net.Listener){
-	conn, err := listener.Accept()
-	if err != nil {
-		log.Print("tcp accept err: ", err)
-	}
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Print("tcp accept err: ", err)
+		}
 
-	// 新线程hold住这条连接
-	go RunConnect(conn) 
+		// 新线程hold住这条连接
+		go RunConnect(conn) 
+	}
 }
 
 
 func main() {
 	arg_num:=len(os.Args)
 	if arg_num < 2 {
-		fmt.Println("Connect: port tcp2wsUrl\nServer: ip:port tcp2wsPort")
-		fmt.Print("\nProxy with Nginx:\nlocation /sparkle {\nproxy_pass http://127.0.0.1:tcp2wsPort;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\n}")
+		fmt.Println("Connect: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort")
 		os.Exit(0)
 	}
 	
 	// 第二个参数是纯数字（端口号）
-	match, _ := regexp.MatchString("[0-9]+", os.Args[2])
-	if match {
+	match, _ := regexp.MatchString("^ws://.*", os.Args[1])
+	if !match {
 		// 服务端
 		tcp_addr = os.Args[1]
 		// ws server
 		http.HandleFunc("/", wsHandler)
 		go http.ListenAndServe("0.0.0.0:" + os.Args[2], nil)
-		fmt.Println("Started ws://0.0.0.0:" +  os.Args[2] + " -> " + os.Args[1] )
+		fmt.Println("Server Started ws://0.0.0.0:" +  os.Args[2] + " -> " + os.Args[1] )
+		fmt.Println("\nProxy with Nginx:\nlocation /sparkle {\nproxy_pass http://127.0.0.1:" + os.Args[2] + ";\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\n}")
 	} else {
 		// 客户端
 		ws_addr = os.Args[1]
 		l, err := net.Listen("tcp", "0.0.0.0:" + os.Args[2])
 		if err != nil {
-			log.Print("create listen err", err)
+			log.Print("create listen err: ", err)
 			os.Exit(1)
 		}
 		go tcpHandler(l)
-		fmt.Println("Started " +  os.Args[1] + " -> ws://0.0.0.0:" + os.Args[2])
+		fmt.Println("Connect Started " +  os.Args[2] + " -> " + os.Args[1])
 	}
 	for {}
 }
