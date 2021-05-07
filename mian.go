@@ -94,7 +94,7 @@ func RunServer(wsConn *websocket.Conn) {
 	go ReadTcp2Ws(id, tcpConn, wsConn)
 }
 
-func RunConnect(tcpConn net.Conn) {
+func RunClient(tcpConn net.Conn) {
 	conn_num += 1
 	id := strconv.Itoa(conn_num)
 	log.Print("new tcp conn: ", id)
@@ -132,7 +132,7 @@ func tcpHandler(listener net.Listener){
 		}
 
 		// 新线程hold住这条连接
-		go RunConnect(conn) 
+		go RunClient(conn) 
 	}
 }
 
@@ -140,7 +140,7 @@ func tcpHandler(listener net.Listener){
 func main() {
 	arg_num:=len(os.Args)
 	if arg_num < 2 {
-		fmt.Println("Connect: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort")
+		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort")
 		os.Exit(0)
 	}
 	
@@ -164,7 +164,7 @@ func main() {
 			os.Exit(1)
 		}
 		go tcpHandler(l)
-		fmt.Println("Connect Started " +  os.Args[2] + " -> " + os.Args[1])
+		fmt.Println("Client Started " +  os.Args[2] + " -> " + os.Args[1])
 	}
 	for {
 		time.Sleep(9223372036854775807)
