@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"time"
 )
 
 var (
@@ -21,6 +22,7 @@ var (
 	ws_addr string
 	conn_num int
 	msg_type int
+	isServer bool
 )
 
 var upgrader = websocket.Upgrader{
@@ -30,7 +32,7 @@ var upgrader = websocket.Upgrader{
 }
 
 func ReadTcp2Ws(id string, tcpConn net.Conn, wsConn *websocket.Conn) {
-	buf := make([]byte, 10240)
+	buf := make([]byte, 16392)
 	for {
 		length,err := tcpConn.Read(buf)
 		if err != nil {
@@ -46,8 +48,9 @@ func ReadTcp2Ws(id string, tcpConn net.Conn, wsConn *websocket.Conn) {
 				wsConn.Close()
 				return
 			}
-			// log.Print(id, "recv tcp : ", string(buf[:length]))
-			log.Print(id, " recv tcp : ", length)
+			if !isServer {
+				log.Print(id, " send: ", length)	
+			}
 		}
 	}
 }
@@ -69,8 +72,9 @@ func ReadWs2Tcp(id string, tcpConn net.Conn, wsConn *websocket.Conn) {
 				wsConn.Close()
 				return
 			}
-			// log.Print(id, "recv ws: ", string(buf))
-			log.Print(id, " recv ws: ", len(buf))		
+			if !isServer {
+				log.Print(id, " recv: ", len(buf))	
+			}
 		}
 	}
 }
@@ -78,7 +82,7 @@ func ReadWs2Tcp(id string, tcpConn net.Conn, wsConn *websocket.Conn) {
 func RunServer(wsConn *websocket.Conn) {
 	conn_num += 1
 	id := strconv.Itoa(conn_num)
-	log.Print("new ws conn: ", id, wsConn.RemoteAddr().String)
+	log.Print("new ws conn: ", id, " ", wsConn.RemoteAddr().String())
 	// call tcp
 	tcpConn, err := net.Dial("tcp", tcp_addr)
 	if(err != nil) {
@@ -98,7 +102,6 @@ func RunConnect(tcpConn net.Conn) {
 	wsConn, _, err := websocket.DefaultDialer.Dial(ws_addr, nil)
 	if err != nil {
 		log.Fatal("connect to ws err: ", err)
-		wsConn.Close()
 	}	
 	
 	go ReadWs2Tcp(id, tcpConn, wsConn)
@@ -143,14 +146,15 @@ func main() {
 	
 	// 第二个参数是纯数字（端口号）
 	match, _ := regexp.MatchString("^ws://.*", os.Args[1])
-	if !match {
+	isServer = bool(!match)
+	if isServer {
 		// 服务端
 		tcp_addr = os.Args[1]
 		// ws server
 		http.HandleFunc("/", wsHandler)
 		go http.ListenAndServe("0.0.0.0:" + os.Args[2], nil)
+		fmt.Println("Proxy with Nginx:\nlocation /sparkle {\nproxy_pass http://127.0.0.1:" + os.Args[2] + ";\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\n}")
 		fmt.Println("Server Started ws://0.0.0.0:" +  os.Args[2] + " -> " + os.Args[1] )
-		fmt.Println("\nProxy with Nginx:\nlocation /sparkle {\nproxy_pass http://127.0.0.1:" + os.Args[2] + ";\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\n}")
 	} else {
 		// 客户端
 		ws_addr = os.Args[1]
@@ -162,5 +166,7 @@ func main() {
 		go tcpHandler(l)
 		fmt.Println("Connect Started " +  os.Args[2] + " -> " + os.Args[1])
 	}
-	for {}
+	for {
+		time.Sleep(9223372036854775807)
+	}
 }
