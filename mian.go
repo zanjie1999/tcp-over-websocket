@@ -153,7 +153,7 @@ func main() {
 		// ws server
 		http.HandleFunc("/", wsHandler)
 		go http.ListenAndServe("0.0.0.0:" + os.Args[2], nil)
-		fmt.Println("Proxy with Nginx:\nlocation /sparkle {\nproxy_pass http://127.0.0.1:" + os.Args[2] + ";\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\n}")
+		fmt.Println("Proxy with Nginx:\nlocation /sparkle/ {\nproxy_pass http://127.0.0.1:" + os.Args[2] + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\n}")
 		fmt.Println("Server Started ws://0.0.0.0:" +  os.Args[2] + " -> " + os.Args[1] )
 	} else {
 		// 客户端
