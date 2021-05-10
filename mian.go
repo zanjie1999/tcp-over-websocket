@@ -26,6 +26,7 @@ type tcp2wsSparkle struct {
  }
 
 var (
+	exitId string
 	tcp_addr string
 	ws_addr string
 	conn_num int
@@ -51,7 +52,7 @@ func deleteConnMap(uuid string) {
 func ReadTcp2Ws(id string, tcpConn net.Conn, wsConn *websocket.Conn, uuid string) (bool) {
 	buf := make([]byte, 16392)
 	for {
-		if tcpConn == nil || wsConn == nil {
+		if exitId == id || tcpConn == nil || wsConn == nil {
 			log.Print(id, " tcp to ws close ")
 			return false
 		}
@@ -93,7 +94,7 @@ func ReadTcp2Ws(id string, tcpConn net.Conn, wsConn *websocket.Conn, uuid string
 
 func ReadWs2Tcp(id string, tcpConn net.Conn, wsConn *websocket.Conn, uuid string) (bool) {
 	for {
-		if tcpConn == nil || wsConn == nil {
+		if exitId == id || tcpConn == nil || wsConn == nil {
 			log.Print(id, " ws to tcp close")
 			return false
 		}
@@ -102,6 +103,8 @@ func ReadWs2Tcp(id string, tcpConn net.Conn, wsConn *websocket.Conn, uuid string
 			log.Print(id, " ws read err: ", err)
 			wsConn.Close()
 			// tcpConn.Close()
+			wsConn = nil
+			exitId = id
 			return true
 		}
 		if len(buf) > 0 {
@@ -138,7 +141,7 @@ func ReadWs2Tcp(id string, tcpConn net.Conn, wsConn *websocket.Conn, uuid string
 func ReadWs2TcpClient(id string, tcpConn net.Conn, wsConn *websocket.Conn, uuid string) {
 	if ReadWs2Tcp(id, tcpConn, wsConn, uuid) {
 		// error return  re call ws
-		RunClient(tcpConn, id, uuid)
+		RunClient(tcpConn, uuid)
 	}
 }
 
@@ -189,8 +192,10 @@ func RunServer(wsConn *websocket.Conn) {
 	go ReadTcp2Ws(id, tcpConn, wsConn, uuid)
 }
 
-func RunClient(tcpConn net.Conn, id, uuid string) {
-	log.Print("dial ws ", uuid)
+func RunClient(tcpConn net.Conn, uuid string) {
+	conn_num += 1
+	id := strconv.Itoa(conn_num)
+	log.Print(id, " dial ws ", uuid)
 	// call ws
 	wsConn, _, err := websocket.DefaultDialer.Dial(ws_addr, nil)
 	if err != nil {
@@ -228,12 +233,10 @@ func tcpHandler(listener net.Listener){
 			log.Print("tcp accept err: ", err)
 		}
 
-		conn_num += 1
-		id := strconv.Itoa(conn_num)
-		log.Print("new tcp conn: ", id)
+		log.Print("new tcp conn: ")
 
 		// 新线程hold住这条连接
-		go RunClient(conn, id, uuid.New().String())
+		go RunClient(conn, uuid.New().String())
 	}
 }
 
