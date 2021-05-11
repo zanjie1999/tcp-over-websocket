@@ -54,10 +54,11 @@ func deleteConnMap(uuid string) {
 	}
 }
 
-func ReadTcp2Ws(id string, uuid string) (bool) {
+func ReadTcp2Ws(uuid string) (bool) {
 	if _, haskey := connMap[uuid]; !haskey {
 		return false
 	}
+	id := connMap[uuid].id
 	buf := make([]byte, 16392)
 	tcpConn := connMap[uuid].tcpConn
 	for {
@@ -83,10 +84,11 @@ func ReadTcp2Ws(id string, uuid string) (bool) {
 	}
 }
 
-func ReadWs2Tcp(id string, uuid string) (bool) {
+func ReadWs2Tcp(uuid string) (bool) {
 	if _, haskey := connMap[uuid]; !haskey {
 		return false
 	}
+	id := connMap[uuid].id
 	wsConn := connMap[uuid].wsConn
 	tcpConn := connMap[uuid].tcpConn
 	for {
@@ -124,26 +126,23 @@ func ReadWs2Tcp(id string, uuid string) (bool) {
 	}
 }
 
-func ReadWs2TcpClient(id string, uuid string) {
-	if ReadWs2Tcp(id, uuid) {
+func ReadWs2TcpClient(uuid string) {
+	if ReadWs2Tcp(uuid) {
 		// error return  re call ws
 		RunClient(nil, uuid)
 	}
 }
 
 func RunServer(wsConn *websocket.Conn) {
-	conn_num += 1
-	id := strconv.Itoa(conn_num)
-	log.Print("new ws conn: ", id, " ", wsConn.RemoteAddr().String())
+	log.Print("new ws conn: ", wsConn.RemoteAddr().String())
 
 	var tcpConn net.Conn
 	var uuid string
 	// read uuid to get from connMap
 	t, buf, err := wsConn.ReadMessage()
 	if err != nil || t == -1 {
-		log.Print(id, " ws uuid read err: ", err)
+		log.Print(" ws uuid read err: ", err)
 		wsConn.Close()
-		tcpConn.Close()
 		return
 	}
 	if len(buf) > 0 {
@@ -168,33 +167,40 @@ func RunServer(wsConn *websocket.Conn) {
 		}
 		if uuid != "" {
 			// save
+			conn_num += 1
+			id := strconv.Itoa(conn_num)
 			connMap[uuid] = &tcp2wsSparkle {id, tcpConn, wsConn, uuid}
 		}
 	} else {
 		log.Print("uuid finded ", uuid)
 	}
 	
-	go ReadWs2Tcp(id, uuid)
-	go ReadTcp2Ws(id, uuid)
+	go ReadWs2Tcp(uuid)
+	go ReadTcp2Ws(uuid)
 }
 
 func RunClient(tcpConn net.Conn, uuid string) {
-	conn_num += 1
-	id := strconv.Itoa(conn_num)
-	log.Print(id, " dial ws ", uuid)
+	log.Print("dial ws ", uuid)
 	// call ws
 	wsConn, _, err := websocket.DefaultDialer.Dial(ws_addr, nil)
 	if err != nil {
 		log.Print("connect to ws err: ", err)
+		tcpConn.Close()
+		return
 	}
 	// send uuid
 	if err := wsConn.WriteMessage(websocket.TextMessage, []byte(uuid));err != nil{
 		log.Print("send ws uuid err: ", err)
+		tcpConn.Close()
+		wsConn.Close()
+		return
 	}
 	
 	// save conn
 	if tcpConn != nil {
 		// save
+		conn_num += 1
+		id := strconv.Itoa(conn_num)
 		connMap[uuid] = &tcp2wsSparkle {id, tcpConn, wsConn, uuid}
 	} else {
 		// update
@@ -204,9 +210,9 @@ func RunClient(tcpConn net.Conn, uuid string) {
 		}
 	}
 
-	go ReadWs2TcpClient(id, uuid)
+	go ReadWs2TcpClient(uuid)
 	if tcpConn != nil {
-		go ReadTcp2Ws(id, uuid)
+		go ReadTcp2Ws(uuid)
 	}
 }
 
