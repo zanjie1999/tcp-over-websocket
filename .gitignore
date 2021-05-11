@@ -1,7 +1,3 @@
-tcp2ws-windows.exe
-tcp2ws-linux
-tcp2ws-linux-arm64
-tcp2ws-zip-linux.png
-tcp2ws-darwin
+build
 tcp2ws
 tcp2ws.exe
