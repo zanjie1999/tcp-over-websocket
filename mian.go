@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+	"os/signal"
 )
 
 type tcp2wsSparkle struct {
@@ -26,6 +27,7 @@ type tcp2wsSparkle struct {
  }
 
 var (
+	quit bool
 	tcp_addr string
 	ws_addr string
 	conn_num int
@@ -137,7 +139,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 }
 
 func ReadWs2TcpClient(uuid string) {
-	if ReadWs2Tcp(uuid) {
+	if ReadWs2Tcp(uuid) && !quit {
 		// error return  re call ws
 		RunClient(nil, uuid)
 	}
@@ -303,7 +305,15 @@ func main() {
 				}
 			}
 		} else {
-			time.Sleep(9223372036854775807)
+			c := make(chan os.Signal, 1)
+			signal.Notify(c, os.Interrupt, os.Kill)
+			<-c
+    		log.Print("quit...")
+			quit = true
+			for k, _ := range connMap {
+				deleteConnMap(k)
+			}
+			os.Exit(0)
 		}
 	}
 }
