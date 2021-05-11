@@ -63,6 +63,9 @@ func ReadTcp2Ws(uuid string) (bool) {
 	buf := make([]byte, 500000)
 	tcpConn := connMap[uuid].tcpConn
 	for {
+		if tcpConn == nil {
+			return false
+		}
 		length,err := tcpConn.Read(buf)
 		if err != nil {
 			log.Print(id, " tcp read err: ", err)
@@ -71,7 +74,10 @@ func ReadTcp2Ws(uuid string) (bool) {
 		}
 		if length > 0 {
 			// 因为tcpConn.Read会阻塞 所以要从connMap中获取最新的wsConn
-			wsConn := connMap[uuid].wsConn
+			wsConn := connMap[uuid].wsConn	
+			if wsConn == nil {
+				return false
+			}
 			if err = wsConn.WriteMessage(msg_type, buf[:length]);err != nil{
 				log.Print(id, " ws write err: ", err)
 				// tcpConn.Close()
@@ -93,6 +99,9 @@ func ReadWs2Tcp(uuid string) (bool) {
 	wsConn := connMap[uuid].wsConn
 	tcpConn := connMap[uuid].tcpConn
 	for {
+		if tcpConn == nil || wsConn == nil {
+			return false
+		}
 		t, buf, err := wsConn.ReadMessage()
 		if err != nil || t == -1 {
 			log.Print(id, " ws read err: ", err)
