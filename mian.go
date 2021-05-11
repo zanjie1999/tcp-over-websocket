@@ -42,10 +42,14 @@ var upgrader = websocket.Upgrader{
 
 func deleteConnMap(uuid string) {
 	if _, haskey := connMap[uuid]; haskey && connMap[uuid] != nil{
-		connMap[uuid].tcpConn.Close()
-		log.Print("say bye to ", uuid)
-		connMap[uuid].wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
-		connMap[uuid].wsConn.Close()
+		if connMap[uuid].tcpConn != nil {
+			connMap[uuid].tcpConn.Close()
+		}
+		if connMap[uuid].wsConn != nil {
+			log.Print("say bye to ", uuid)
+			connMap[uuid].wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
+			connMap[uuid].wsConn.Close()
+		}
 		delete(connMap, uuid)
 	}
 }
