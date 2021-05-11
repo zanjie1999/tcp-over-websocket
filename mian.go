@@ -245,7 +245,7 @@ func main() {
 	}
 	
 	// 第二个参数是纯数字（端口号）
-	match, _ := regexp.MatchString("^ws://.*", os.Args[1])
+	match, _ := regexp.MatchString("^(ws|http)://.*", os.Args[1])
 	isServer = bool(!match)
 	if isServer {
 		// 服务端
@@ -254,17 +254,21 @@ func main() {
 		http.HandleFunc("/", wsHandler)
 		go http.ListenAndServe("0.0.0.0:" + os.Args[2], nil)
 		fmt.Println("Proxy with Nginx:\nlocation /sparkle/ {\nproxy_pass http://127.0.0.1:" + os.Args[2] + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\n}")
-		fmt.Println("Server Started ws://0.0.0.0:" +  os.Args[2] + " -> " + os.Args[1] )
+		fmt.Println("Server Started ws://0.0.0.0:" +  os.Args[2] + " -> " + tcp_addr )
 	} else {
 		// 客户端
-		ws_addr = os.Args[1]
+		if match, _ := regexp.MatchString("^http://.*", os.Args[1]); match {
+			ws_addr = "ws" + os.Args[1][4:]
+		} else {
+			ws_addr = os.Args[1]
+		}
 		l, err := net.Listen("tcp", "0.0.0.0:" + os.Args[2])
 		if err != nil {
 			log.Print("create listen err: ", err)
 			os.Exit(1)
 		}
 		go tcpHandler(l)
-		fmt.Println("Client Started " +  os.Args[2] + " -> " + os.Args[1])
+		fmt.Println("Client Started " +  os.Args[2] + " -> " + ws_addr)
 	}
 	for {
 		if isServer {
