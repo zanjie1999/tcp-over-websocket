@@ -59,7 +59,8 @@ func ReadTcp2Ws(uuid string) (bool) {
 		return false
 	}
 	id := connMap[uuid].id
-	buf := make([]byte, 16392)
+	// buf := make([]byte, 1000000)
+	buf := make([]byte, 500000)
 	tcpConn := connMap[uuid].tcpConn
 	for {
 		length,err := tcpConn.Read(buf)

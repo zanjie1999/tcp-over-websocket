@@ -15,3 +15,29 @@
 在客户端运行`ws://yourdomain.com/ssh 222`  
 那么就可以通过客户端的222来访问服务器的ssh啦  
 是不是特别棒呢  
+
+## 速度
+在Windows使用本工具来回转换iperf3端口测试得到的数据
+```
+[ ID] Interval           Transfer     Bandwidth
+[  4]   0.00-1.00   sec   300 MBytes  2.52 Gbits/sec
+[  4]   1.00-2.00   sec   336 MBytes  2.81 Gbits/sec
+[  4]   2.00-3.00   sec   320 MBytes  2.68 Gbits/sec
+[  4]   3.00-4.00   sec   317 MBytes  2.66 Gbits/sec
+[  4]   4.00-5.00   sec   302 MBytes  2.53 Gbits/sec
+[  4]   5.00-6.00   sec   328 MBytes  2.75 Gbits/sec
+[  4]   6.00-7.00   sec   312 MBytes  2.61 Gbits/sec
+[  4]   7.00-8.00   sec   319 MBytes  2.67 Gbits/sec
+[  4]   8.00-9.00   sec   322 MBytes  2.70 Gbits/sec
+[  4]   9.00-10.00  sec   348 MBytes  2.92 Gbits/sec
+- - - - - - - - - - - - - - - - - - - - - - - - -
+[ ID] Interval           Transfer     Bandwidth
+[  4]   0.00-10.00  sec  3.14 GBytes  2.70 Gbits/sec                  sender
+[  4]   0.00-10.00  sec  3.13 GBytes  2.69 Gbits/sec                  receiver
+```
+两个iperf3直连
+```
+[ ID] Interval           Transfer     Bandwidth
+[  4]   0.00-10.00  sec  9.53 GBytes  8.19 Gbits/sec                  sender
+[  4]   0.00-10.00  sec  9.53 GBytes  8.19 Gbits/sec                  receiver
+```
