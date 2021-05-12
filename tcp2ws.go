@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v3.1
+// v3.2
 
 package main
 
@@ -183,12 +183,13 @@ func RunServer(wsConn *websocket.Conn) {
 			id := strconv.Itoa(conn_num)
 			connMap[uuid] = &tcp2wsSparkle {id, tcpConn, wsConn, uuid}
 		}
+
+		go ReadTcp2Ws(uuid)
 	} else {
 		log.Print("uuid finded ", uuid)
 	}
 	
 	go ReadWs2Tcp(uuid)
-	go ReadTcp2Ws(uuid)
 }
 
 func RunClient(tcpConn net.Conn, uuid string) {
@@ -249,6 +250,7 @@ func tcpHandler(listener net.Listener){
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Print("tcp accept err: ", err)
+			return
 		}
 
 		log.Print("new tcp conn: ")
