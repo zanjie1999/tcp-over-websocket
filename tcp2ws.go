@@ -198,13 +198,17 @@ func RunClient(tcpConn net.Conn, uuid string) {
 	wsConn, _, err := websocket.DefaultDialer.Dial(ws_addr, nil)
 	if err != nil {
 		log.Print("connect to ws err: ", err)
-		tcpConn.Close()
+		if tcpConn != nil {
+			tcpConn.Close()
+		}
 		return
 	}
 	// send uuid
 	if err := wsConn.WriteMessage(websocket.TextMessage, []byte(uuid));err != nil{
 		log.Print("send ws uuid err: ", err)
-		tcpConn.Close()
+		if tcpConn != nil {
+			tcpConn.Close()
+		}
 		wsConn.Close()
 		return
 	}
