@@ -86,9 +86,9 @@ func ReadTcp2Ws(uuid string) (bool) {
 				wsConn.Close()
 				return true
 			}
-			if !isServer {
-				log.Print(id, " send: ", length)	
-			}
+			// if !isServer {
+			// 	log.Print(id, " send: ", length)	
+			// }
 		}
 	}
 }
@@ -131,9 +131,9 @@ func ReadWs2Tcp(uuid string) (bool) {
 				deleteConnMap(uuid)
 				return false
 			}
-			if !isServer {
-				log.Print(id, " recv: ", len(buf))	
-			}
+			// if !isServer {
+			// 	log.Print(id, " recv: ", len(buf))	
+			// }
 		}
 	}
 }
@@ -296,7 +296,7 @@ func main() {
 	}
 	for {
 		if isServer {
-			time.Sleep(5 * 60 * time.Second)
+			time.Sleep(2 * 60 * time.Second)
 			// check ws
 			for k, i := range connMap {
 				if err := i.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkle"));err != nil{
