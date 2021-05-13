@@ -71,7 +71,7 @@ func ReadTcp2Ws(uuid string) (bool) {
 		}
 		length,err := tcpConn.Read(buf)
 		if err != nil {
-			if !connMap[uuid].del {
+			if connMap[uuid] != nil &&  !connMap[uuid].del {
 				// quiet when delete
 				log.Print(id, " tcp read err: ", err)
 				deleteConnMap(uuid)
@@ -110,7 +110,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 		}
 		t, buf, err := wsConn.ReadMessage()
 		if err != nil || t == -1 {
-			if !connMap[uuid].del {
+			if connMap[uuid] != nil && !connMap[uuid].del {
 				// quiet when delete
 				log.Print(id, " ws read err: ", err)
 			}
