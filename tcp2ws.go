@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v3.2
+// v3.3
 
 package main
 
@@ -24,10 +24,10 @@ type tcp2wsSparkle struct {
 	tcpConn net.Conn
 	wsConn *websocket.Conn
 	uuid string
+	del bool
  }
 
 var (
-	quit bool
 	tcp_addr string
 	ws_addr string
 	conn_num int
@@ -43,14 +43,15 @@ var upgrader = websocket.Upgrader{
 }
 
 func deleteConnMap(uuid string) {
-	if _, haskey := connMap[uuid]; haskey && connMap[uuid] != nil{
-		if connMap[uuid].tcpConn != nil {
-			connMap[uuid].tcpConn.Close()
+	if conn, haskey := connMap[uuid]; haskey && connMap[uuid] != nil && !connMap[uuid].del{
+		conn.del = true
+		if conn.tcpConn != nil {
+			conn.tcpConn.Close()
 		}
-		if connMap[uuid].wsConn != nil {
+		if conn.wsConn != nil {
 			log.Print("say bye to ", uuid)
-			connMap[uuid].wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
-			connMap[uuid].wsConn.Close()
+			conn.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
+			conn.wsConn.Close()
 		}
 		delete(connMap, uuid)
 	}
@@ -70,8 +71,11 @@ func ReadTcp2Ws(uuid string) (bool) {
 		}
 		length,err := tcpConn.Read(buf)
 		if err != nil {
-			log.Print(id, " tcp read err: ", err)
-			deleteConnMap(uuid)
+			if !connMap[uuid].del {
+				// quiet when delete
+				log.Print(id, " tcp read err: ", err)
+				deleteConnMap(uuid)
+			}
 			return false
 		}
 		if length > 0 {
@@ -106,7 +110,10 @@ func ReadWs2Tcp(uuid string) (bool) {
 		}
 		t, buf, err := wsConn.ReadMessage()
 		if err != nil || t == -1 {
-			log.Print(id, " ws read err: ", err)
+			if !connMap[uuid].del {
+				// quiet when delete
+				log.Print(id, " ws read err: ", err)
+			}
 			wsConn.Close()
 			// tcpConn.Close()
 			return true
@@ -139,7 +146,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 }
 
 func ReadWs2TcpClient(uuid string) {
-	if ReadWs2Tcp(uuid) && !quit {
+	if ReadWs2Tcp(uuid) {
 		// error return  re call ws
 		RunClient(nil, uuid)
 	}
@@ -161,10 +168,10 @@ func RunServer(wsConn *websocket.Conn) {
 		if t == websocket.TextMessage {
 			uuid = string(buf)
 			// get
-			if _, haskey := connMap[uuid]; haskey {
-				tcpConn = connMap[uuid].tcpConn
-				connMap[uuid].wsConn.Close()
-				connMap[uuid].wsConn = wsConn
+			if conn, haskey := connMap[uuid]; haskey {
+				tcpConn = conn.tcpConn
+				conn.wsConn.Close()
+				conn.wsConn = wsConn
 			}
 		}
 	}
@@ -181,7 +188,7 @@ func RunServer(wsConn *websocket.Conn) {
 			// save
 			conn_num += 1
 			id := strconv.Itoa(conn_num)
-			connMap[uuid] = &tcp2wsSparkle {id, tcpConn, wsConn, uuid}
+			connMap[uuid] = &tcp2wsSparkle {id, tcpConn, wsConn, uuid, false}
 		}
 
 		go ReadTcp2Ws(uuid)
@@ -193,6 +200,16 @@ func RunServer(wsConn *websocket.Conn) {
 }
 
 func RunClient(tcpConn net.Conn, uuid string) {
+	// conn is close?
+	if tcpConn == nil {
+		if conn, haskey := connMap[uuid]; haskey {
+			if conn.del {
+				return
+			}
+		} else {
+			return
+		}
+	}
 	log.Print("dial ws ", uuid)
 	// call ws
 	wsConn, _, err := websocket.DefaultDialer.Dial(ws_addr, nil)
@@ -218,7 +235,7 @@ func RunClient(tcpConn net.Conn, uuid string) {
 		// save
 		conn_num += 1
 		id := strconv.Itoa(conn_num)
-		connMap[uuid] = &tcp2wsSparkle {id, tcpConn, wsConn, uuid}
+		connMap[uuid] = &tcp2wsSparkle {id, tcpConn, wsConn, uuid, false}
 	} else {
 		// update
 		if _, haskey := connMap[uuid]; haskey {
@@ -260,7 +277,7 @@ func tcpHandler(listener net.Listener){
 		log.Print("new tcp conn: ")
 
 		// 新线程hold住这条连接
-		go RunClient(conn, uuid.New().String())
+		go RunClient(conn, uuid.New().String()[32:])
 	}
 }
 
@@ -315,7 +332,6 @@ func main() {
 			signal.Notify(c, os.Interrupt, os.Kill)
 			<-c
     		log.Print("quit...")
-			quit = true
 			for k, _ := range connMap {
 				deleteConnMap(k)
 			}
