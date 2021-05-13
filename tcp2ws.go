@@ -20,7 +20,6 @@ import (
 )
 
 type tcp2wsSparkle struct {
-	id string
 	tcpConn net.Conn
 	wsConn *websocket.Conn
 	uuid string
@@ -61,7 +60,6 @@ func ReadTcp2Ws(uuid string) (bool) {
 	if _, haskey := connMap[uuid]; !haskey {
 		return false
 	}
-	id := connMap[uuid].id
 	// buf := make([]byte, 1000000)
 	buf := make([]byte, 500000)
 	tcpConn := connMap[uuid].tcpConn
@@ -73,7 +71,7 @@ func ReadTcp2Ws(uuid string) (bool) {
 		if err != nil {
 			if connMap[uuid] != nil &&  !connMap[uuid].del {
 				// quiet when delete
-				log.Print(id, " tcp read err: ", err)
+				log.Print(uuid, " tcp read err: ", err)
 				deleteConnMap(uuid)
 			}
 			return false
@@ -85,13 +83,13 @@ func ReadTcp2Ws(uuid string) (bool) {
 				return false
 			}
 			if err = wsConn.WriteMessage(msg_type, buf[:length]);err != nil{
-				log.Print(id, " ws write err: ", err)
+				log.Print(uuid, " ws write err: ", err)
 				// tcpConn.Close()
 				wsConn.Close()
 				return true
 			}
 			// if !isServer {
-			// 	log.Print(id, " send: ", length)	
+			// 	log.Print(uuid, " send: ", length)	
 			// }
 		}
 	}
@@ -101,7 +99,6 @@ func ReadWs2Tcp(uuid string) (bool) {
 	if _, haskey := connMap[uuid]; !haskey {
 		return false
 	}
-	id := connMap[uuid].id
 	wsConn := connMap[uuid].wsConn
 	tcpConn := connMap[uuid].tcpConn
 	for {
@@ -112,7 +109,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 		if err != nil || t == -1 {
 			if connMap[uuid] != nil && !connMap[uuid].del {
 				// quiet when delete
-				log.Print(id, " ws read err: ", err)
+				log.Print(uuid, " ws read err: ", err)
 			}
 			wsConn.Close()
 			// tcpConn.Close()
@@ -134,12 +131,12 @@ func ReadWs2Tcp(uuid string) (bool) {
 			}
 			msg_type = t
 			if _, err = tcpConn.Write(buf);err != nil{
-				log.Print(id, " tcp write err: ", err)
+				log.Print(uuid, " tcp write err: ", err)
 				deleteConnMap(uuid)
 				return false
 			}
 			// if !isServer {
-			// 	log.Print(id, " recv: ", len(buf))	
+			// 	log.Print(uuid, " recv: ", len(buf))	
 			// }
 		}
 	}
@@ -187,8 +184,7 @@ func RunServer(wsConn *websocket.Conn) {
 		if uuid != "" {
 			// save
 			conn_num += 1
-			id := strconv.Itoa(conn_num)
-			connMap[uuid] = &tcp2wsSparkle {id, tcpConn, wsConn, uuid, false}
+			connMap[uuid] = &tcp2wsSparkle {tcpConn, wsConn, uuid, false}
 		}
 
 		go ReadTcp2Ws(uuid)
@@ -234,8 +230,7 @@ func RunClient(tcpConn net.Conn, uuid string) {
 	if tcpConn != nil {
 		// save
 		conn_num += 1
-		id := strconv.Itoa(conn_num)
-		connMap[uuid] = &tcp2wsSparkle {id, tcpConn, wsConn, uuid, false}
+		connMap[uuid] = &tcp2wsSparkle {tcpConn, wsConn, uuid, false}
 	} else {
 		// update
 		if _, haskey := connMap[uuid]; haskey {
@@ -321,7 +316,7 @@ func main() {
 			// check ws
 			for k, i := range connMap {
 				if err := i.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkle"));err != nil{
-					log.Print(i.id, " timeout close")
+					log.Print(i.uuid, " timeout close")
 					i.tcpConn.Close()
 					i.wsConn.Close()
 					deleteConnMap(k)
