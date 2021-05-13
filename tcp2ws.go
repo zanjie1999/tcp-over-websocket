@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v3.3
+// v3.4
 
 package main
 
@@ -23,6 +23,7 @@ type tcp2wsSparkle struct {
 	wsConn *websocket.Conn
 	uuid string
 	del bool
+	buf []byte
  }
 
 var (
@@ -85,6 +86,8 @@ func ReadTcp2Ws(uuid string) (bool) {
 				log.Print(uuid, " ws write err: ", err)
 				// tcpConn.Close()
 				wsConn.Close()
+				// save send error buf
+				connMap[uuid].buf = buf[:length]
 				return true
 			}
 			// if !isServer {
@@ -168,6 +171,11 @@ func RunServer(wsConn *websocket.Conn) {
 				tcpConn = conn.tcpConn
 				conn.wsConn.Close()
 				conn.wsConn = wsConn
+				if conn.buf != nil {
+					// send error buf
+					wsConn.WriteMessage(websocket.TextMessage, connMap[uuid].buf)
+					conn.buf = nil
+				}
 			}
 		}
 	}
@@ -183,7 +191,7 @@ func RunServer(wsConn *websocket.Conn) {
 		if uuid != "" {
 			// save
 			conn_num += 1
-			connMap[uuid] = &tcp2wsSparkle {tcpConn, wsConn, uuid, false}
+			connMap[uuid] = &tcp2wsSparkle {tcpConn, wsConn, uuid, false, nil}
 		}
 
 		go ReadTcp2Ws(uuid)
@@ -229,12 +237,17 @@ func RunClient(tcpConn net.Conn, uuid string) {
 	if tcpConn != nil {
 		// save
 		conn_num += 1
-		connMap[uuid] = &tcp2wsSparkle {tcpConn, wsConn, uuid, false}
+		connMap[uuid] = &tcp2wsSparkle {tcpConn, wsConn, uuid, false, nil}
 	} else {
 		// update
-		if _, haskey := connMap[uuid]; haskey {
-			connMap[uuid].wsConn.Close()
-			connMap[uuid].wsConn = wsConn
+		if conn, haskey := connMap[uuid]; haskey {
+			conn.wsConn.Close()
+			conn.wsConn = wsConn
+			if conn.buf != nil {
+				// send error buf
+				wsConn.WriteMessage(websocket.TextMessage, conn.buf)
+				conn.buf = nil
+			}
 		}
 	}
 
