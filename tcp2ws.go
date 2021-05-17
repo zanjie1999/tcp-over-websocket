@@ -158,7 +158,7 @@ func ReadWs2TcpClient(uuid string) {
 func writeErrorBuf2Ws(uuid string)  {
 	if conn, haskey := connMap[uuid]; haskey && conn.buf != nil {
 		for i := 0; i < len(conn.buf); i++ {
-			connMap[uuid].wsConn.WriteMessage(websocket.TextMessage, conn.buf[i])
+			connMap[uuid].wsConn.WriteMessage(websocket.BinaryMessage, conn.buf[i])
 		}
 		conn.buf = nil
 	}
