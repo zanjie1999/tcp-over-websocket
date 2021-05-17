@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v3.4
+// v3.5
 
 package main
 
@@ -87,8 +87,12 @@ func ReadTcp2Ws(uuid string) (bool) {
 				// tcpConn.Close()
 				wsConn.Close()
 				// save send error buf
-				connMap[uuid].buf = buf[:length]
-				return true
+				if connMap[uuid].buf == nil{
+					connMap[uuid].buf = buf[:length]
+				} else {
+					append(connMap[uuid].buf, buf[:length])
+				}
+				// 此处无需中断 等着新的wsConn 或是被 断开连接 / 回收 即可
 			}
 			// if !isServer {
 			// 	log.Print(uuid, " send: ", length)	
