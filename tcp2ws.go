@@ -90,7 +90,7 @@ func ReadTcp2Ws(uuid string) (bool) {
 				if connMap[uuid].buf == nil{
 					connMap[uuid].buf = buf[:length]
 				} else {
-					append(connMap[uuid].buf, buf[:length])
+					connMap[uuid].buf = append(connMap[uuid].buf, buf[:length]...)
 				}
 				// 此处无需中断 等着新的wsConn 或是被 断开连接 / 回收 即可
 			}
