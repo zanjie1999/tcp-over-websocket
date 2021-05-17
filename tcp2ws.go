@@ -23,7 +23,7 @@ type tcp2wsSparkle struct {
 	wsConn *websocket.Conn
 	uuid string
 	del bool
-	buf []byte
+	buf [][]byte
  }
 
 var (
@@ -88,9 +88,9 @@ func ReadTcp2Ws(uuid string) (bool) {
 				wsConn.Close()
 				// save send error buf
 				if connMap[uuid].buf == nil{
-					connMap[uuid].buf = buf[:length]
+					connMap[uuid].buf = [][]byte{buf[:length]}
 				} else {
-					connMap[uuid].buf = append(connMap[uuid].buf, buf[:length]...)
+					connMap[uuid].buf = append(connMap[uuid].buf, buf[:length])
 				}
 				// 此处无需中断 等着新的wsConn 或是被 断开连接 / 回收 即可
 			}
@@ -155,6 +155,15 @@ func ReadWs2TcpClient(uuid string) {
 	}
 }
 
+func writeErrorBuf2Ws(uuid string)  {
+	if conn, haskey := connMap[uuid]; haskey && conn.buf != nil {
+		for i := 0; i < len(conn.buf); i++ {
+			connMap[uuid].wsConn.WriteMessage(websocket.TextMessage, conn.buf[i])
+		}
+		conn.buf = nil
+	}
+}
+
 func RunServer(wsConn *websocket.Conn) {
 	log.Print("new ws conn: ", wsConn.RemoteAddr().String())
 
@@ -175,11 +184,7 @@ func RunServer(wsConn *websocket.Conn) {
 				tcpConn = conn.tcpConn
 				conn.wsConn.Close()
 				conn.wsConn = wsConn
-				if conn.buf != nil {
-					// send error buf
-					wsConn.WriteMessage(websocket.TextMessage, connMap[uuid].buf)
-					conn.buf = nil
-				}
+				writeErrorBuf2Ws(uuid)
 			}
 		}
 	}
@@ -247,11 +252,7 @@ func RunClient(tcpConn net.Conn, uuid string) {
 		if conn, haskey := connMap[uuid]; haskey {
 			conn.wsConn.Close()
 			conn.wsConn = wsConn
-			if conn.buf != nil {
-				// send error buf
-				wsConn.WriteMessage(websocket.TextMessage, conn.buf)
-				conn.buf = nil
-			}
+			writeErrorBuf2Ws(uuid)
 		}
 	}
 
