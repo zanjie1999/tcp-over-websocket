@@ -1,3 +1,27 @@
-build
-tcp2ws
-tcp2ws.exe
+# Compiled Object files, Static and Dynamic libs (Shared Objects)
+*.o
+*.a
+*.so
+
+# Folders
+_obj
+_test
+.vscode/
+release/
+vendor/
+
+# Architecture specific extensions/prefixes
+*.cgo1.go
+*.cgo2.c
+_cgo_defun.c
+_cgo_gotypes.go
+_cgo_export.*
+_testmain.go
+
+*.exe
+*.test
+*.prof
+*.upx
+
+debug
+tcp2ws*
