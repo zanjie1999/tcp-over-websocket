@@ -43,19 +43,17 @@ jobs:
 
     # create steps
     steps:
-      # step1: Check out Git Repository
+      # step1: Prepare Compilation Environment
+      - name: Prepare Compilation Environment
+        uses: actions/setup-go@v1
+        with:
+          go-version: 1.13
+
+      # step2: Check out Git Repository
       - name: Check out Git Repository
         uses: actions/checkout@v2
         with:
           ref: master
-
-      # step2: Prepare Compilation Environment
-      - name: Prepare Compilation Environment
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo -E apt-get update
-          sudo -E apt-get install -y pkg-config tar golang-1.13
 
       # step3: Build Apps
       - name: Build Apps
