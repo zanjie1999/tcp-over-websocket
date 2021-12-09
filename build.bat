@@ -18,4 +18,6 @@ move tcp2ws build\tcp2ws-linux
 SET GOARCH=arm64
 go build
 move tcp2ws build\tcp2ws-linux-arm64
-
+SET GOOS=darwin
+go build
+move tcp2ws build\tcp2ws-darwin-arm64
