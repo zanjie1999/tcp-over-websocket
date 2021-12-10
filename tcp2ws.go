@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v3.5
+// v4.5
 
 package main
 
@@ -44,6 +44,8 @@ var upgrader = websocket.Upgrader{
 func deleteConnMap(uuid string) {
 	if conn, haskey := connMap[uuid]; haskey && connMap[uuid] != nil && !connMap[uuid].del{
 		conn.del = true
+		// 等一下再关闭 避免太快多线程锁不到
+		time.Sleep(100 * time.Millisecond)
 		if conn.tcpConn != nil {
 			conn.tcpConn.Close()
 		}
@@ -60,7 +62,6 @@ func ReadTcp2Ws(uuid string) (bool) {
 	if _, haskey := connMap[uuid]; !haskey {
 		return false
 	}
-	// buf := make([]byte, 1000000)
 	buf := make([]byte, 500000)
 	tcpConn := connMap[uuid].tcpConn
 	for {
@@ -266,10 +267,21 @@ func RunClient(tcpConn net.Conn, uuid string) {
 
 // 响应ws请求
 func wsHandler(w http.ResponseWriter , r *http.Request){
+	// 不是ws的请求返回index.html 假装是一个静态服务器
+	if r.Header.Get("Upgrade") != "websocket" {
+		log.Print("not ws")
+		_, err := os.Stat("index.html")
+		if err == nil {
+			http.ServeFile(w, r, "index.html")
+		}
+		return
+	} 
+
 	// ws协议握手
 	conn, err := upgrader.Upgrade(w,r,nil)
 	if err != nil{
 		log.Print("ws upgrade err: ", err)
+		fmt.Fprintf(w, "1111")
 		return 
 	}
 
@@ -302,11 +314,16 @@ func main() {
 	}
 	
 	// 第二个参数是纯数字（端口号）
-	match, _ := regexp.MatchString("^(ws|http)://.*", os.Args[1])
-	isServer = bool(!match)
-	if isServer {
+	match, _ := regexp.MatchString(`^(ws|http)://.*`, os.Args[1])
+	if !match {
 		// 服务端
-		tcp_addr = os.Args[1]
+		match, _ := regexp.MatchString(`^\d+$`, os.Args[1])
+		if match {
+			// 只有端口号默认127.0.0.1
+			tcp_addr = "127.0.0.1:" + os.Args[1]
+		} else {
+			tcp_addr = os.Args[1]
+		}
 		// ws server
 		http.HandleFunc("/", wsHandler)
 		go http.ListenAndServe("0.0.0.0:" + os.Args[2], nil)
