@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v4.1
+// v4.2
 
 package main
 
@@ -71,13 +71,10 @@ func ReadTcp2Ws(uuid string) (bool) {
 		length,err := tcpConn.Read(buf)
 		if err != nil {
 			if connMap[uuid] != nil {
-				if connMap[uuid].del {
-					deleteConnMap(uuid)
-				} else {
-					// 外部干涉导致中断
-					log.Print(uuid, " tcp read err: ", err)
-					return true
-				}
+				// tcp中断 关闭所有连接
+				log.Print(uuid, " tcp read err: ", err)
+				deleteConnMap(uuid)
+				return false
 			}
 			return false
 		}
@@ -120,7 +117,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 		if err != nil || t == -1 {
 			wsConn.Close()
 			if connMap[uuid] != nil && !connMap[uuid].del {
-				// 外部干涉导致中断
+				// 外部干涉导致中断 重连ws
 				log.Print(uuid, " ws read err: ", err)
 				return true
 			}
