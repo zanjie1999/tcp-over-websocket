@@ -2,3 +2,4 @@ build
 tcp2ws
 tcp2ws.exe
 go.sum
+.DS_Store
