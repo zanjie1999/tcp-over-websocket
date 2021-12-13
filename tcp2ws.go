@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v4.0
+// v4.1
 
 package main
 
@@ -65,15 +65,19 @@ func ReadTcp2Ws(uuid string) (bool) {
 	buf := make([]byte, 500000)
 	tcpConn := connMap[uuid].tcpConn
 	for {
-		if tcpConn == nil {
+		if _, haskey := connMap[uuid]; !haskey || connMap[uuid].del || tcpConn == nil {
 			return false
 		}
 		length,err := tcpConn.Read(buf)
 		if err != nil {
-			if connMap[uuid] != nil &&  !connMap[uuid].del {
-				// quiet when delete
-				log.Print(uuid, " tcp read err: ", err)
-				deleteConnMap(uuid)
+			if connMap[uuid] != nil {
+				if connMap[uuid].del {
+					deleteConnMap(uuid)
+				} else {
+					// 外部干涉导致中断
+					log.Print(uuid, " tcp read err: ", err)
+					return true
+				}
 			}
 			return false
 		}
@@ -109,18 +113,18 @@ func ReadWs2Tcp(uuid string) (bool) {
 	wsConn := connMap[uuid].wsConn
 	tcpConn := connMap[uuid].tcpConn
 	for {
-		if tcpConn == nil || wsConn == nil {
+		if _, haskey := connMap[uuid]; !haskey || connMap[uuid].del || tcpConn == nil || wsConn == nil {
 			return false
 		}
 		t, buf, err := wsConn.ReadMessage()
 		if err != nil || t == -1 {
-			if connMap[uuid] != nil && !connMap[uuid].del {
-				// quiet when delete
-				log.Print(uuid, " ws read err: ", err)
-			}
 			wsConn.Close()
-			// tcpConn.Close()
-			return true
+			if connMap[uuid] != nil && !connMap[uuid].del {
+				// 外部干涉导致中断
+				log.Print(uuid, " ws read err: ", err)
+				return true
+			}
+			return false
 		}
 		if len(buf) > 0 {
 			if t == websocket.TextMessage {
