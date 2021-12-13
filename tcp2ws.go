@@ -320,7 +320,7 @@ func tcpHandler(listener net.Listener){
 func main() {
 	// 崩溃时自动重启
 	defer func() {
-		fmt.Println("Boom！Restart...\n", recover())
+		log.Print("Boom！Restart...\n", recover())
 		main()
 	}()
 
@@ -345,7 +345,7 @@ func main() {
 		http.HandleFunc("/", wsHandler)
 		go http.ListenAndServe("0.0.0.0:" + os.Args[2], nil)
 		fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://127.0.0.1:" + os.Args[2] + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
-		fmt.Println("Server Started ws://0.0.0.0:" +  os.Args[2] + " -> " + tcp_addr )
+		log.Print("Server Started ws://0.0.0.0:" +  os.Args[2] + " -> " + tcp_addr )
 	} else {
 		// 客户端
 		if match, _ := regexp.MatchString("^http://.*", os.Args[1]); match {
@@ -359,7 +359,7 @@ func main() {
 			os.Exit(1)
 		}
 		go tcpHandler(l)
-		fmt.Println("Client Started " +  os.Args[2] + " -> " + ws_addr)
+		log.Print("Client Started " +  os.Args[2] + " -> " + ws_addr)
 	}
 	for {
 		if isServer {
@@ -377,7 +377,7 @@ func main() {
 			c := make(chan os.Signal, 1)
 			signal.Notify(c, os.Interrupt, os.Kill)
 			<-c
-    		log.Print("quit...")
+    		log.Print(" quit...")
 			for k, _ := range connMap {
 				deleteConnMap(k)
 			}
