@@ -79,8 +79,11 @@ func ReadTcp2Ws(uuid string) (bool) {
 			return false
 		}
 		if length > 0 {
+			if _, haskey := connMap[uuid]; !haskey || connMap[uuid].del {
+				return false
+			}
 			// 因为tcpConn.Read会阻塞 所以要从connMap中获取最新的wsConn
-			wsConn := connMap[uuid].wsConn	
+			wsConn := connMap[uuid].wsConn
 			if wsConn == nil {
 				return false
 			}
