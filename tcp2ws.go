@@ -42,7 +42,7 @@ var upgrader = websocket.Upgrader{
 }
 
 func deleteConnMap(uuid string) {
-	if conn, haskey := connMap[uuid]; haskey && connMap[uuid] != nil && !connMap[uuid].del{
+	if conn, haskey := connMap[uuid]; haskey && conn != nil && !conn.del{
 		conn.del = true
 		// 等一下再关闭 避免太快多线程锁不到
 		time.Sleep(100 * time.Millisecond)
@@ -54,7 +54,9 @@ func deleteConnMap(uuid string) {
 			conn.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
 			conn.wsConn.Close()
 		}
-		delete(connMap, uuid)
+		if _, haskey = connMap[uuid]; haskey {
+			delete(connMap, uuid)
+		}
 	}
 }
 
@@ -70,8 +72,8 @@ func ReadTcp2Ws(uuid string) (bool) {
 		}
 		length,err := tcpConn.Read(buf)
 		if err != nil {
-			if connMap[uuid] != nil {
-				// tcp中断 关闭所有连接
+			if connMap[uuid] != nil && !connMap[uuid].del {
+				// tcp中断 关闭所有连接 关过的就不用关了
 				log.Print(uuid, " tcp read err: ", err)
 				deleteConnMap(uuid)
 				return false
