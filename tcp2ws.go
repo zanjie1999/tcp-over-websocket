@@ -42,6 +42,12 @@ var upgrader = websocket.Upgrader{
 }
 
 func deleteConnMap(uuid string) {
+	defer func() {
+		err := recover()
+		if err != nil {
+			log.Print("del conn Boom!\n", err)
+		}
+	}()
 	if conn, haskey := connMap[uuid]; haskey && conn != nil && !conn.del{
 		conn.del = true
 		// 等一下再关闭 避免太快多线程锁不到
