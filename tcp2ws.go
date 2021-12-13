@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v4.3
+// v4.4
 
 package main
 
@@ -58,9 +58,17 @@ func deleteConnMap(uuid string) {
 			delete(connMap, uuid)
 		}
 	}
+	// panic("炸一下试试")
 }
 
 func ReadTcp2Ws(uuid string) (bool) {
+	defer func() {
+		err := recover()
+		if err != nil {
+			log.Print("tcp -> ws Boom!\n", err)
+			ReadTcp2Ws(uuid)
+		}
+	}()
 	if _, haskey := connMap[uuid]; !haskey {
 		return false
 	}
@@ -109,6 +117,13 @@ func ReadTcp2Ws(uuid string) (bool) {
 }
 
 func ReadWs2Tcp(uuid string) (bool) {
+	defer func() {
+		err := recover()
+		if err != nil {
+			log.Print("ws -> tcp Boom!\n", err)
+			ReadWs2Tcp(uuid)
+		}
+	}()
 	if _, haskey := connMap[uuid]; !haskey {
 		return false
 	}
@@ -318,12 +333,6 @@ func tcpHandler(listener net.Listener){
 
 
 func main() {
-	// 崩溃时自动重启
-	defer func() {
-		log.Print("Boom！Restart...\n", recover())
-		main()
-	}()
-
 	arg_num:=len(os.Args)
 	if arg_num < 2 {
 		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort")
@@ -332,7 +341,8 @@ func main() {
 	
 	// 第二个参数是纯数字（端口号）
 	match, _ := regexp.MatchString(`^(ws|http)://.*`, os.Args[1])
-	if !match {
+	isServer = !match
+	if isServer {
 		// 服务端
 		match, _ := regexp.MatchString(`^\d+$`, os.Args[1])
 		if match {
