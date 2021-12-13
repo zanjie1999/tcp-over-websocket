@@ -4,7 +4,7 @@ SET CGO_ENABLED=1
 SET GOARCH=amd64
 SET GOOS=windows
 go build
-move tcp2ws.exe build\tcp2ws-windows.exe
+move tcp2ws.exe build\tcp2ws.exe
 SET CGO_ENABLED=0
 SET GOOS=darwin
 go build

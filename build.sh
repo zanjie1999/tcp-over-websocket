@@ -5,7 +5,7 @@ export CGO_ENABLED=1
 export GOARCH=amd64
 export GOOS=windows
 go build
-mv tcp2ws.exe build/tcp2ws-windows.exe
+mv tcp2ws.exe build/tcp2ws.exe
 export CGO_ENABLED=0
 export GOOS=darwin
 go build
