@@ -318,6 +318,12 @@ func tcpHandler(listener net.Listener){
 
 
 func main() {
+	// 崩溃时自动重启
+	defer func() {
+		fmt.Println("Boom！Restart...\n", recover())
+		main()
+	}()
+
 	arg_num:=len(os.Args)
 	if arg_num < 2 {
 		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort")
