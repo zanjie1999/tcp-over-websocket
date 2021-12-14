@@ -18,7 +18,31 @@
 是不是特别棒呢  
 
 ## 速度
-在Windows使用本工具来回转换iperf3端口测试得到的数据
+在乞丐版M1 Pro的macOS下使用本工具来回转换iperf3端口测试得到的数据
+```
+[ ID] Interval           Transfer     Bitrate
+[  5]   0.00-1.00   sec   988 MBytes  8.28 Gbits/sec
+[  5]   1.00-2.00   sec   977 MBytes  8.19 Gbits/sec
+[  5]   2.00-3.00   sec   982 MBytes  8.23 Gbits/sec
+[  5]   3.00-4.00   sec   994 MBytes  8.34 Gbits/sec
+[  5]   4.00-5.00   sec   966 MBytes  8.10 Gbits/sec
+[  5]   5.00-6.00   sec   982 MBytes  8.24 Gbits/sec
+[  5]   6.00-7.00   sec   989 MBytes  8.30 Gbits/sec
+[  5]   7.00-8.00   sec   935 MBytes  7.84 Gbits/sec
+[  5]   8.00-9.00   sec  1004 MBytes  8.42 Gbits/sec
+[  5]   9.00-10.00  sec   984 MBytes  8.26 Gbits/sec
+- - - - - - - - - - - - - - - - - - - - - - - - -
+[ ID] Interval           Transfer     Bitrate
+[  5]   0.00-10.00  sec  9.57 GBytes  8.22 Gbits/sec                  sender
+[  5]   0.00-10.00  sec  9.56 GBytes  8.21 Gbits/sec                  receiver
+```
+直连
+```
+[ ID] Interval           Transfer     Bitrate
+[  5]   0.00-10.00  sec   119 GBytes   102 Gbits/sec                  sender
+[  5]   0.00-10.00  sec   119 GBytes   102 Gbits/sec                  receiver
+```
+在i7-8550u的Windows下使用本工具来回转换iperf3端口测试得到的数据
 ```
 [ ID] Interval           Transfer     Bandwidth
 [  4]   0.00-1.00   sec   300 MBytes  2.52 Gbits/sec
