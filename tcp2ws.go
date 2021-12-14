@@ -46,7 +46,7 @@ var upgrader = websocket.Upgrader{
 func getConn(uuid string) (*tcp2wsSparkle, bool) {
 	connMapLock.RLock()
 	defer connMapLock.RUnlock()
-	conn, haskey := getConn(uuid);
+	conn, haskey := connMap[uuid];
 	return conn, haskey
 }
 
@@ -57,8 +57,6 @@ func setConn(uuid string, conn *tcp2wsSparkle) {
 }
 
 func deleteConn(uuid string) {
-	defer connMapLock.Unlock()
-
 	if conn, haskey := getConn(uuid); haskey && conn != nil && !conn.del{
 		conn.del = true
 		// 等一下再关闭 避免太快多线程锁不到
@@ -67,11 +65,12 @@ func deleteConn(uuid string) {
 			conn.tcpConn.Close()
 		}
 		if conn.wsConn != nil {
-			log.Print("say bye to ", uuid)
+			log.Print(uuid, " bye")
 			conn.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
 			conn.wsConn.Close()
 		}
 		connMapLock.Lock()
+		defer connMapLock.Unlock()
 		delete(connMap, uuid)
 	}
 	// panic("炸一下试试")
@@ -81,7 +80,7 @@ func ReadTcp2Ws(uuid string) (bool) {
 	defer func() {
 		err := recover()
 		if err != nil {
-			log.Print("tcp -> ws Boom!\n", err)
+			log.Print(uuid, " tcp -> ws Boom!\n", err)
 			ReadTcp2Ws(uuid)
 		}
 	}()
@@ -139,7 +138,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 	defer func() {
 		err := recover()
 		if err != nil {
-			log.Print("ws -> tcp Boom!\n", err)
+			log.Print(uuid, " ws -> tcp Boom!\n", err)
 			ReadWs2Tcp(uuid)
 		}
 	}()
@@ -277,7 +276,7 @@ func RunClient(tcpConn net.Conn, uuid string) {
 			return
 		}
 	}
-	log.Print("dial ws ", uuid)
+	log.Print(uuid, " dial")
 	// call ws
 	wsConn, _, err := websocket.DefaultDialer.Dial(ws_addr, nil)
 	if err != nil {
