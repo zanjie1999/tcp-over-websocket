@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v4.4
+// v4.5
 
 package main
 
@@ -60,9 +60,7 @@ func deleteConnMap(uuid string) {
 			conn.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
 			conn.wsConn.Close()
 		}
-		if _, haskey = connMap[uuid]; haskey {
-			delete(connMap, uuid)
-		}
+		delete(connMap, uuid)
 	}
 	// panic("炸一下试试")
 }
@@ -75,18 +73,19 @@ func ReadTcp2Ws(uuid string) (bool) {
 			ReadTcp2Ws(uuid)
 		}
 	}()
-	if _, haskey := connMap[uuid]; !haskey {
+	conn, haskey := connMap[uuid];
+	if !haskey {
 		return false
 	}
 	buf := make([]byte, 500000)
-	tcpConn := connMap[uuid].tcpConn
+	tcpConn := conn.tcpConn
 	for {
-		if _, haskey := connMap[uuid]; !haskey || connMap[uuid].del || tcpConn == nil {
+		if conn.del || tcpConn == nil {
 			return false
 		}
 		length,err := tcpConn.Read(buf)
 		if err != nil {
-			if connMap[uuid] != nil && !connMap[uuid].del {
+			if conn, haskey := connMap[uuid]; haskey && !conn.del {
 				// tcp中断 关闭所有连接 关过的就不用关了
 				log.Print(uuid, " tcp read err: ", err)
 				deleteConnMap(uuid)
@@ -95,11 +94,12 @@ func ReadTcp2Ws(uuid string) (bool) {
 			return false
 		}
 		if length > 0 {
-			if _, haskey := connMap[uuid]; !haskey || connMap[uuid].del {
+			// 因为tcpConn.Read会阻塞 所以要从connMap中获取最新的wsConn
+			conn, haskey := connMap[uuid];
+			if !haskey || conn.del {
 				return false
 			}
-			// 因为tcpConn.Read会阻塞 所以要从connMap中获取最新的wsConn
-			wsConn := connMap[uuid].wsConn
+			wsConn := conn.wsConn
 			if wsConn == nil {
 				return false
 			}
@@ -108,10 +108,10 @@ func ReadTcp2Ws(uuid string) (bool) {
 				// tcpConn.Close()
 				wsConn.Close()
 				// save send error buf
-				if connMap[uuid].buf == nil{
-					connMap[uuid].buf = [][]byte{buf[:length]}
+				if conn.buf == nil{
+					conn.buf = [][]byte{buf[:length]}
 				} else {
-					connMap[uuid].buf = append(connMap[uuid].buf, buf[:length])
+					conn.buf = append(conn.buf, buf[:length])
 				}
 				// 此处无需中断 等着新的wsConn 或是被 断开连接 / 回收 即可
 			}
@@ -130,19 +130,20 @@ func ReadWs2Tcp(uuid string) (bool) {
 			ReadWs2Tcp(uuid)
 		}
 	}()
-	if _, haskey := connMap[uuid]; !haskey {
+	conn, haskey := connMap[uuid];
+	if !haskey {
 		return false
 	}
-	wsConn := connMap[uuid].wsConn
-	tcpConn := connMap[uuid].tcpConn
+	wsConn := conn.wsConn
+	tcpConn := conn.tcpConn
 	for {
-		if _, haskey := connMap[uuid]; !haskey || connMap[uuid].del || tcpConn == nil || wsConn == nil {
+		if conn.del || tcpConn == nil || wsConn == nil {
 			return false
 		}
 		t, buf, err := wsConn.ReadMessage()
 		if err != nil || t == -1 {
 			wsConn.Close()
-			if connMap[uuid] != nil && !connMap[uuid].del {
+			if conn, haskey := connMap[uuid]; haskey && !conn.del {
 				// 外部干涉导致中断 重连ws
 				log.Print(uuid, " ws read err: ", err)
 				return true
@@ -186,7 +187,7 @@ func ReadWs2TcpClient(uuid string) {
 func writeErrorBuf2Ws(uuid string)  {
 	if conn, haskey := connMap[uuid]; haskey && conn.buf != nil {
 		for i := 0; i < len(conn.buf); i++ {
-			connMap[uuid].wsConn.WriteMessage(websocket.BinaryMessage, conn.buf[i])
+			conn.wsConn.WriteMessage(websocket.BinaryMessage, conn.buf[i])
 		}
 		conn.buf = nil
 	}
