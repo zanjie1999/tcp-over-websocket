@@ -346,7 +346,7 @@ func main() {
 		os.Exit(0)
 	}
 	
-	// 第二个参数是纯数字（端口号）
+	// 第一个参数是ws
 	match, _ := regexp.MatchString(`^(ws|http)://.*`, os.Args[1])
 	isServer = !match
 	if isServer {
