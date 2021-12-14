@@ -165,7 +165,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 			if t == websocket.TextMessage {
 				msg := string(buf)
 				if msg == "tcp2wsSparkle" {
-					log.Print(uuid, "咩")
+					log.Print(uuid, " 咩")
 					continue
 				} else if msg == "tcp2wsSparkleClose" {
 					log.Print(uuid, " say bye")
