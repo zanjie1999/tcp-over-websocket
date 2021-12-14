@@ -59,8 +59,6 @@ func setConn(uuid string, conn *tcp2wsSparkle) {
 func deleteConn(uuid string) {
 	if conn, haskey := getConn(uuid); haskey && conn != nil && !conn.del{
 		conn.del = true
-		// 等一下再关闭 避免太快多线程锁不到
-		time.Sleep(100 * time.Millisecond)
 		if conn.tcpConn != nil {
 			conn.tcpConn.Close()
 		}
