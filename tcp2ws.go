@@ -48,6 +48,7 @@ func deleteConnMap(uuid string) {
 			log.Print("del conn Boom!\n", err)
 		}
 	}()
+
 	if conn, haskey := connMap[uuid]; haskey && conn != nil && !conn.del{
 		conn.del = true
 		// 等一下再关闭 避免太快多线程锁不到
@@ -73,6 +74,7 @@ func ReadTcp2Ws(uuid string) (bool) {
 			ReadTcp2Ws(uuid)
 		}
 	}()
+
 	conn, haskey := connMap[uuid];
 	if !haskey {
 		return false
@@ -130,6 +132,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 			ReadWs2Tcp(uuid)
 		}
 	}()
+
 	conn, haskey := connMap[uuid];
 	if !haskey {
 		return false
@@ -194,6 +197,13 @@ func writeErrorBuf2Ws(uuid string)  {
 }
 
 func RunServer(wsConn *websocket.Conn) {
+	defer func() {
+		err := recover()
+		if err != nil {
+			log.Print("server Boom!\n", err)
+		}
+	}()
+	
 	log.Print("new ws conn: ", wsConn.RemoteAddr().String())
 
 	var tcpConn net.Conn
@@ -241,6 +251,12 @@ func RunServer(wsConn *websocket.Conn) {
 }
 
 func RunClient(tcpConn net.Conn, uuid string) {
+	defer func() {
+		err := recover()
+		if err != nil {
+			log.Print("client Boom!\n", err)
+		}
+	}()
 	// conn is close?
 	if tcpConn == nil {
 		if conn, haskey := connMap[uuid]; haskey {
