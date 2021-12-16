@@ -368,8 +368,8 @@ func tcpHandler(listener net.Listener){
 func main() {
 	arg_num:=len(os.Args)
 	if arg_num < 2 {
-		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nuse wss: ip:port tcp2wsPort tcp2ws.crt tcp2ws.key")
-		fmt.Println("Make ssl cert:\nopenssl genrsa -out tcp2ws.key 2048\nopenssl ecparam -genkey -name secp384r1 -out tcp2ws.key\nopenssl req -new -x509 -sha256 -key tcp2ws.key -out tcp2ws.crt -days 36500")
+		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nuse wss: ip:port tcp2wsPort server.crt server.key")
+		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
 	}
 	serverUrl := os.Args[1]
