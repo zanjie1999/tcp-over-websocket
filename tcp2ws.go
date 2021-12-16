@@ -368,7 +368,8 @@ func tcpHandler(listener net.Listener){
 func main() {
 	arg_num:=len(os.Args)
 	if arg_num < 2 {
-		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nuse wss: ip:port tcp2wsPort server.crt server.key")
+		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nuse wss: ip:port tcp2wsPort tcp2ws.crt tcp2ws.key")
+		fmt.Println("Make ssl cert:\nopenssl genrsa -out tcp2ws.key 2048\nopenssl ecparam -genkey -name secp384r1 -out tcp2ws.key\nopenssl req -new -x509 -sha256 -key tcp2ws.key -out tcp2ws.crt -days 36500")
 		os.Exit(0)
 	}
 	serverUrl := os.Args[1]
@@ -400,7 +401,7 @@ func main() {
 		// ws server
 		http.HandleFunc("/", wsHandler)
 		if isSsl {
-			log.Print("use wss server")
+			log.Print("use ssl cert: ", sslCrt, sslKey)
 			go http.ListenAndServeTLS("0.0.0.0:"+listenPort, sslCrt, sslKey, nil)
 			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://127.0.0.1:" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
 			log.Print("Server Started wss://127.0.0.1:" +  listenPort + " -> " + tcp_addr )
