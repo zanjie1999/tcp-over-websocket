@@ -401,7 +401,7 @@ func main() {
 		// ws server
 		http.HandleFunc("/", wsHandler)
 		if isSsl {
-			log.Print("use ssl cert: ", sslCrt, sslKey)
+			fmt.Println("use ssl cert: ", sslCrt, sslKey)
 			go http.ListenAndServeTLS("0.0.0.0:"+listenPort, sslCrt, sslKey, nil)
 			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://127.0.0.1:" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
 			log.Print("Server Started wss://127.0.0.1:" +  listenPort + " -> " + tcp_addr )
