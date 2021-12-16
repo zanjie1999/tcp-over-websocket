@@ -17,6 +17,7 @@ import (
 	"time"
 	"os/signal"
 	"sync"
+	"crypto/tls"
 )
 
 type tcp2wsSparkle struct {
@@ -278,7 +279,8 @@ func RunClient(tcpConn net.Conn, uuid string) {
 	}
 	log.Print(uuid, " dial")
 	// call ws
-	wsConn, _, err := websocket.DefaultDialer.Dial(ws_addr, nil)
+	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}}
+	wsConn, _, err := dialer.Dial(ws_addr, nil)
 	if err != nil {
 		log.Print("connect to ws err: ", err)
 		if tcpConn != nil {
@@ -366,41 +368,61 @@ func tcpHandler(listener net.Listener){
 func main() {
 	arg_num:=len(os.Args)
 	if arg_num < 2 {
-		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort")
+		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nuse wss: ip:port tcp2wsPort server.crt server.key")
 		os.Exit(0)
 	}
-	
+	serverUrl := os.Args[1]
+	listenPort := os.Args[2]
+	isSsl := false
+	if arg_num == 3 {
+		isSsl = os.Args[3] == "wss" || os.Args[3] == "https" || os.Args[3] == "ssl"
+	}
+	sslCrt := "server.crt"
+	sslKey := "server.key"
+	if arg_num == 4 {
+		isSsl = true
+		sslCrt = os.Args[3]
+		sslKey = os.Args[4]
+	}
+
 	// 第一个参数是ws
-	match, _ := regexp.MatchString(`^(ws|http)://.*`, os.Args[1])
+	match, _ := regexp.MatchString(`^(ws|wss|http)://.*`, serverUrl)
 	isServer = !match
 	if isServer {
 		// 服务端
-		match, _ := regexp.MatchString(`^\d+$`, os.Args[1])
+		match, _ := regexp.MatchString(`^\d+$`, serverUrl)
 		if match {
 			// 只有端口号默认127.0.0.1
-			tcp_addr = "127.0.0.1:" + os.Args[1]
+			tcp_addr = "127.0.0.1:" + serverUrl
 		} else {
-			tcp_addr = os.Args[1]
+			tcp_addr = serverUrl
 		}
 		// ws server
 		http.HandleFunc("/", wsHandler)
-		go http.ListenAndServe("0.0.0.0:" + os.Args[2], nil)
-		fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://127.0.0.1:" + os.Args[2] + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
-		log.Print("Server Started ws://0.0.0.0:" +  os.Args[2] + " -> " + tcp_addr )
+		if isSsl {
+			log.Print("use wss server")
+			go http.ListenAndServeTLS("0.0.0.0:"+listenPort, sslCrt, sslKey, nil)
+			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://127.0.0.1:" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
+			log.Print("Server Started wss://127.0.0.1:" +  listenPort + " -> " + tcp_addr )
+		} else {
+			go http.ListenAndServe("0.0.0.0:" + listenPort, nil)
+			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://127.0.0.1:" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
+			log.Print("Server Started ws://127.0.0.1:" +  listenPort + " -> " + tcp_addr )
+		}
 	} else {
 		// 客户端
-		if match, _ := regexp.MatchString("^http://.*", os.Args[1]); match {
-			ws_addr = "ws" + os.Args[1][4:]
+		if match, _ := regexp.MatchString("^http://.*", serverUrl); match {
+			ws_addr = "ws" + serverUrl[4:]
 		} else {
-			ws_addr = os.Args[1]
+			ws_addr = serverUrl
 		}
-		l, err := net.Listen("tcp", "0.0.0.0:" + os.Args[2])
+		l, err := net.Listen("tcp", "0.0.0.0:" + listenPort)
 		if err != nil {
 			log.Print("create listen err: ", err)
 			os.Exit(1)
 		}
 		go tcpHandler(l)
-		log.Print("Client Started " +  os.Args[2] + " -> " + ws_addr)
+		log.Print("Client Started " +  listenPort + " -> " + ws_addr)
 	}
 	for {
 		if isServer {
