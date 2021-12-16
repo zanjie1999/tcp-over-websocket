@@ -375,12 +375,12 @@ func main() {
 	serverUrl := os.Args[1]
 	listenPort := os.Args[2]
 	isSsl := false
-	if arg_num == 3 {
+	if arg_num == 4 {
 		isSsl = os.Args[3] == "wss" || os.Args[3] == "https" || os.Args[3] == "ssl"
 	}
 	sslCrt := "server.crt"
 	sslKey := "server.key"
-	if arg_num == 4 {
+	if arg_num == 5 {
 		isSsl = true
 		sslCrt = os.Args[3]
 		sslKey = os.Args[4]
