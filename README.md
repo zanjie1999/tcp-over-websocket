@@ -55,6 +55,12 @@ openssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500
 [  5]   0.00-10.00  sec  9.57 GBytes  8.22 Gbits/sec                  sender
 [  5]   0.00-10.00  sec  9.56 GBytes  8.21 Gbits/sec                  receiver
 ```
+走wss，因为ssl，速度肉眼可见下降:
+```
+[ ID] Interval           Transfer     Bitrate
+[  5]   0.00-10.00  sec  7.38 GBytes  6.34 Gbits/sec                  sender
+[  5]   0.00-10.00  sec  7.38 GBytes  6.33 Gbits/sec                  receiver
+```
 直连
 ```
 [ ID] Interval           Transfer     Bitrate
