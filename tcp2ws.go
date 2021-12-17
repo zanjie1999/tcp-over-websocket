@@ -387,7 +387,7 @@ func main() {
 	}
 
 	// 第一个参数是ws
-	match, _ := regexp.MatchString(`^(ws|wss|http)://.*`, serverUrl)
+	match, _ := regexp.MatchString(`^(ws|wss|http|https)://.*`, serverUrl)
 	isServer = !match
 	if isServer {
 		// 服务端
