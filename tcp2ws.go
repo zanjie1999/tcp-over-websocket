@@ -401,7 +401,7 @@ func main() {
 		// ws server
 		http.HandleFunc("/", wsHandler)
 		if isSsl {
-			fmt.Println("use ssl cert: ", sslCrt, sslKey)
+			fmt.Println("use ssl cert: " + sslCrt + " " + sslKey)
 			go http.ListenAndServeTLS("0.0.0.0:"+listenPort, sslCrt, sslKey, nil)
 			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://127.0.0.1:" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
 			log.Print("Server Started wss://127.0.0.1:" +  listenPort + " -> " + tcp_addr )
@@ -414,6 +414,8 @@ func main() {
 		// 客户端
 		if match, _ := regexp.MatchString("^http://.*", serverUrl); match {
 			ws_addr = "ws" + serverUrl[4:]
+		} else if match, _ := regexp.MatchString("^https://.*", serverUrl); match {
+			ws_addr = "wss" + serverUrl[5:]
 		} else {
 			ws_addr = serverUrl
 		}

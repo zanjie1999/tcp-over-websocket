@@ -7,8 +7,27 @@
 
 ## 如何使用
 在右边Releases中选择你使用的平台的程序来运行  
-服务端：`tcp2ws 要代理的ip:端口 本ws服务的监听端口`  
-客户端：`tcp2ws ws://链接 本地监听端口`  
+服务端：  
+`tcp2ws 要代理的ip:端口 本ws服务的监听端口`   
+`tcp2ws 本地端口 本ws服务的监听端口`  
+客户端：  
+`tcp2ws ws://链接 本地监听端口`  
+`tcp2ws http://链接 本地监听端口`  
+
+另外也可以使用wss(https ssl)协议，ssl更为安全，但需要消耗更多流量，需要指定证书路径，另外顺带提一下nginx可以把wss(https)转发到ws(http)  
+服务端：  
+`tcp2ws 要代理的ip:端口 本ws服务的监听端口 证书.crt 证书.key`
+`tcp2ws 本地端口 本ws服务的监听端口 证书.crt 证书.key`   
+使用默认的文件名 server.crt server.key（这里的wss也可以是https或ssl）   
+`tcp2ws 要代理的ip:端口 本ws服务的监听端口 wss`  
+客户端：  
+`tcp2ws wss://链接 本地监听端口`  
+`tcp2ws https://链接 本地监听端口`  
+
+生成自签证书的方法（一路回车即可）：  
+openssl genrsa -out server.key 2048
+openssl ecparam -genkey -name secp384r1 -out server.key
+openssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500
 
 举个🌰：  
 在服务器运行`tcp2ws 127.0.0.1:22 22222`  
