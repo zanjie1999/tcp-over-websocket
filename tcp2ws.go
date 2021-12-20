@@ -58,6 +58,9 @@ func setConn(uuid string, conn *tcp2wsSparkle) {
 }
 
 func deleteConn(uuid string) {
+	// 不管需不需要删 锁了再说避免并发多次delete 谁先锁上就谁删
+	connMapLock.Lock()
+	defer connMapLock.Unlock()
 	if conn, haskey := getConn(uuid); haskey && conn != nil && !conn.del{
 		conn.del = true
 		if conn.tcpConn != nil {
@@ -68,8 +71,6 @@ func deleteConn(uuid string) {
 			conn.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
 			conn.wsConn.Close()
 		}
-		connMapLock.Lock()
-		defer connMapLock.Unlock()
 		delete(connMap, uuid)
 	}
 	// panic("炸一下试试")
@@ -400,15 +401,20 @@ func main() {
 		}
 		// ws server
 		http.HandleFunc("/", wsHandler)
+		match, _ = regexp.MatchString(`^\d+$`, listenPort)
+		if match {
+			// 如果没指定监听ip那就全部监听 省掉不必要的防火墙
+			listenPort = "0.0.0.0:" + listenPort
+		}
 		if isSsl {
 			fmt.Println("use ssl cert: " + sslCrt + " " + sslKey)
-			go http.ListenAndServeTLS("0.0.0.0:"+listenPort, sslCrt, sslKey, nil)
-			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://127.0.0.1:" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
-			log.Print("Server Started wss://127.0.0.1:" +  listenPort + " -> " + tcp_addr )
+			go http.ListenAndServeTLS(listenPort, sslCrt, sslKey, nil)
+			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
+			log.Print("Server Started wss://" +  listenPort + " -> " + tcp_addr )
 		} else {
-			go http.ListenAndServe("0.0.0.0:" + listenPort, nil)
-			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://127.0.0.1:" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
-			log.Print("Server Started ws://127.0.0.1:" +  listenPort + " -> " + tcp_addr )
+			go http.ListenAndServe(listenPort, nil)
+			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
+			log.Print("Server Started ws://" +  listenPort + " -> " + tcp_addr )
 		}
 	} else {
 		// 客户端
