@@ -12,6 +12,7 @@
 服务端：  
 `tcp2ws 要代理的ip:端口 本ws服务的监听端口`   
 `tcp2ws 本地端口 本ws服务的监听端口`  
+`tcp2ws 本地端口 监听ip:本ws服务的监听端口`   
 客户端：  
 `tcp2ws ws://链接 本地监听端口`  
 `tcp2ws http://链接 本地监听端口`  
@@ -20,7 +21,8 @@
 服务端：  
 `tcp2ws 要代理的ip:端口 本ws服务的监听端口 证书.crt 证书.key`
 `tcp2ws 本地端口 本ws服务的监听端口 证书.crt 证书.key`   
-使用默认的文件名 server.crt server.key（这里的wss也可以是https或ssl）   
+`tcp2ws 本地端口 监听ip:本ws服务的监听端口 证书.crt 证书.key`   
+使用默认的文件名 server.crt server.key（这里的`wss`也可以是`https`或`ssl`）   
 `tcp2ws 要代理的ip:端口 本ws服务的监听端口 wss`  
 客户端：  
 `tcp2ws wss://链接 本地监听端口`  
