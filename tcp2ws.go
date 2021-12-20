@@ -58,10 +58,9 @@ func setConn(uuid string, conn *tcp2wsSparkle) {
 }
 
 func deleteConn(uuid string) {
-	// 不管需不需要删 锁了再说避免并发多次delete 谁先锁上就谁删
-	connMapLock.Lock()
-	defer connMapLock.Unlock()
 	if conn, haskey := getConn(uuid); haskey && conn != nil && !conn.del{
+		connMapLock.Lock()
+		defer connMapLock.Unlock()
 		conn.del = true
 		if conn.tcpConn != nil {
 			conn.tcpConn.Close()
