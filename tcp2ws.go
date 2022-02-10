@@ -26,6 +26,7 @@ type tcp2wsSparkle struct {
 	uuid string
 	del bool
 	buf [][]byte
+	t int64
  }
 
 var (
@@ -114,6 +115,7 @@ func ReadTcp2Ws(uuid string) (bool) {
 			if wsConn == nil {
 				return false
 			}
+			conn.t = time.Now().Unix()
 			if err = wsConn.WriteMessage(msg_type, buf[:length]);err != nil{
 				log.Print(uuid, " ws write err: ", err)
 				// tcpConn.Close()
@@ -163,6 +165,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 			return false
 		}
 		if len(buf) > 0 {
+			conn.t = time.Now().Unix()
 			if t == websocket.TextMessage {
 				msg := string(buf)
 				if msg == "tcp2wsSparkle" {
@@ -249,7 +252,7 @@ func RunServer(wsConn *websocket.Conn) {
 		}
 		if uuid != "" {
 			// save
-			setConn(uuid, &tcp2wsSparkle {tcpConn, wsConn, uuid, false, nil})
+			setConn(uuid, &tcp2wsSparkle {tcpConn, wsConn, uuid, false, nil, time.Now().Unix()})
 		}
 
 		go ReadTcp2Ws(uuid)
@@ -301,12 +304,13 @@ func RunClient(tcpConn net.Conn, uuid string) {
 	// save conn
 	if tcpConn != nil {
 		// save
-		setConn(uuid, &tcp2wsSparkle {tcpConn, wsConn, uuid, false, nil})
+		setConn(uuid, &tcp2wsSparkle {tcpConn, wsConn, uuid, false, nil, time.Now().Unix()})
 	} else {
 		// update
 		if conn, haskey := getConn(uuid); haskey {
 			conn.wsConn.Close()
 			conn.wsConn = wsConn
+			conn.t = time.Now().Unix()
 			writeErrorBuf2Ws(uuid)
 		}
 	}
@@ -434,14 +438,19 @@ func main() {
 	}
 	for {
 		if isServer {
+			// 心跳间隔2分钟
 			time.Sleep(2 * 60 * time.Second)
+			nowTimeCut := time.Now().Unix() - 2 * 60
 			// check ws
 			for k, i := range connMap {
-				if err := i.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkle"));err != nil{
-					log.Print(i.uuid, " timeout close")
-					i.tcpConn.Close()
-					i.wsConn.Close()
-					deleteConn(k)
+				// 如果超过2分钟没有收到消息，才发心跳，避免读写冲突
+				if i.t < nowTimeCut {
+					if err := i.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkle"));err != nil{
+						log.Print(i.uuid, " timeout close")
+						i.tcpConn.Close()
+						i.wsConn.Close()
+						deleteConn(k)
+					}
 				}
 			}
 		} else {
