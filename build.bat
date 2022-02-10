@@ -34,3 +34,6 @@ move tcp2ws build\tcp2ws-darwin-arm64
 SET GOARCH=amd64
 go build
 move tcp2ws build\tcp2ws-darwin
+SET GOOS=freebsd
+go build
+move tcp2ws build/tcp2ws-freebsd

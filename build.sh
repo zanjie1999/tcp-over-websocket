@@ -35,3 +35,6 @@ mv tcp2ws build/tcp2ws-darwin-arm64
 export GOARCH=amd64
 go build
 mv tcp2ws build/tcp2ws-darwin
+export GOOS=freebsd
+go build
+mv tcp2ws build/tcp2ws-freebsd
