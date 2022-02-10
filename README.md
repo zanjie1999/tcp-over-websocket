@@ -34,7 +34,7 @@ openssl ecparam -genkey -name secp384r1 -out server.key
 openssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500
 
 举个🌰：  
-在服务器运行`tcp2ws 127.0.0.1:22 22222`  
+在服务器运行`tcp2ws 127.0.0.1:22 127.0.0.1:22222`  
 然后在nginx中反代了一下  
 在客户端运行`tcp2ws ws://yourdomain.com/ssh 222`  
 那么就可以通过客户端的222来访问服务器的ssh啦  
