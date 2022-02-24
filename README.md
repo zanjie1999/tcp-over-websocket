@@ -40,6 +40,11 @@ openssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500
 那么就可以通过客户端的222来访问服务器的ssh啦  
 是不是特别棒呢  
 
+还可以写一个死循环来守护运行 
+`while true;do;tcp2ws 127.0.0.1:22 127.0.0.1:22222;done`  
+或者用screen来后台运行  
+`screen -dmS tcp2ws bash -c "tcp2ws 127.0.0.1:22 127.0.0.1:22222"`
+
 ## 速度
 在乞丐版M1 Pro的macOS下使用本工具来回转换iperf3端口测试得到的数据
 ```
