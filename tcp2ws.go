@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v7.0
+// v7.1
 
 package main
 
@@ -217,8 +217,6 @@ func RunServer(wsConn *websocket.Conn) {
 			log.Print("server Boom!\n", err)
 		}
 	}()
-	
-	log.Print("new ws conn: ", wsConn.RemoteAddr().String())
 
 	var tcpConn net.Conn
 	var uuid string
@@ -325,9 +323,9 @@ func RunClient(tcpConn net.Conn, uuid string) {
 
 // 响应ws请求
 func wsHandler(w http.ResponseWriter , r *http.Request){
+	forwarded := r.Header.Get("X-Forwarded-For")
 	// 不是ws的请求返回index.html 假装是一个静态服务器
 	if r.Header.Get("Upgrade") != "websocket" {
-		forwarded := r.Header.Get("X-Forwarded-For")
 		if forwarded == "" {
 			log.Print("not ws: ", r.RemoteAddr)
 		} else {
@@ -338,13 +336,18 @@ func wsHandler(w http.ResponseWriter , r *http.Request){
 			http.ServeFile(w, r, "index.html")
 		}
 		return
-	} 
+	} else {
+		if forwarded == "" {
+			log.Print("new ws conn: ", r.RemoteAddr)
+		} else {
+			log.Print("new ws conn: ", forwarded)
+		}
+	}
 
 	// ws协议握手
 	conn, err := upgrader.Upgrade(w,r,nil)
 	if err != nil{
 		log.Print("ws upgrade err: ", err)
-		fmt.Fprintf(w, "1111")
 		return 
 	}
 
