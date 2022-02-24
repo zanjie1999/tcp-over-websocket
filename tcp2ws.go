@@ -327,7 +327,7 @@ func RunClient(tcpConn net.Conn, uuid string) {
 func wsHandler(w http.ResponseWriter , r *http.Request){
 	// 不是ws的请求返回index.html 假装是一个静态服务器
 	if r.Header.Get("Upgrade") != "websocket" {
-		forwarded := r.Header.Get("X-FORWARDED-FOR")
+		forwarded := r.Header.Get("X-Forwarded-For")
 		if forwarded == "" {
 			log.Print("not ws: ", r.RemoteAddr)
 		} else {
@@ -365,6 +365,20 @@ func tcpHandler(listener net.Listener){
 
 		// 新线程hold住这条连接
 		go RunClient(conn, uuid.New().String()[32:])
+	}
+}
+
+// 启动ws服务
+func startWsServer(listenPort string, isSsl bool, sslCrt string, sslKey string){
+	var err error = nil
+	if isSsl {
+		fmt.Println("use ssl cert: " + sslCrt + " " + sslKey)
+		err = http.ListenAndServeTLS(listenPort, sslCrt, sslKey, nil)
+	} else {
+		err = http.ListenAndServe(listenPort, nil)
+	}
+	if err != nil {
+		log.Fatal("tcp2ws Server Start Error: ", err)
 	}
 }
 
@@ -409,16 +423,15 @@ func main() {
 			// 如果没指定监听ip那就全部监听 省掉不必要的防火墙
 			listenPort = "0.0.0.0:" + listenPort
 		}
+		go startWsServer(listenPort, isSsl, sslCrt, sslKey)
 		if isSsl {
-			fmt.Println("use ssl cert: " + sslCrt + " " + sslKey)
-			go http.ListenAndServeTLS(listenPort, sslCrt, sslKey, nil)
-			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
 			log.Print("Server Started wss://" +  listenPort + " -> " + tcp_addr )
+			fmt.Print("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://" + listenPort)
 		} else {
-			go http.ListenAndServe(listenPort, nil)
-			fmt.Println("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://" + listenPort + "/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\n}")
 			log.Print("Server Started ws://" +  listenPort + " -> " + tcp_addr )
+			fmt.Print("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://" + listenPort)
 		}
+		fmt.Println("/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\naccess_log off;\n}")
 	} else {
 		// 客户端
 		if match, _ := regexp.MatchString("^http://.*", serverUrl); match {
@@ -430,8 +443,7 @@ func main() {
 		}
 		l, err := net.Listen("tcp", "0.0.0.0:" + listenPort)
 		if err != nil {
-			log.Print("create listen err: ", err)
-			os.Exit(1)
+			log.Fatal("tcp2ws Client Start Error: ", err)
 		}
 		go tcpHandler(l)
 		log.Print("Client Started " +  listenPort + " -> " + ws_addr)
