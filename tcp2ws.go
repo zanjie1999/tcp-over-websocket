@@ -99,7 +99,9 @@ func ReadTcp2Ws(uuid string) (bool) {
 		if err != nil {
 			if conn, haskey := getConn(uuid); haskey && !conn.del {
 				// tcp中断 关闭所有连接 关过的就不用关了
-				log.Print(uuid, " tcp read err: ", err)
+				if err.Error() != "EOF" {
+					log.Print(uuid, " tcp read err: ", err)
+				}
 				deleteConn(uuid)
 				return false
 			}
@@ -280,7 +282,7 @@ func RunClient(tcpConn net.Conn, uuid string) {
 	}
 	log.Print(uuid, " dial")
 	// call ws
-	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}}
+	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment}
 	wsConn, _, err := dialer.Dial(ws_addr, nil)
 	if err != nil {
 		log.Print("connect to ws err: ", err)
