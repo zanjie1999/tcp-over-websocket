@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v7.1
+// v8.1
 
 package main
 
