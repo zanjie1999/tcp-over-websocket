@@ -29,9 +29,11 @@
 `tcp2ws https://链接 本地监听端口`  
 
 生成自签证书的方法（一路回车即可）：  
+```
 openssl genrsa -out server.key 2048
 openssl ecparam -genkey -name secp384r1 -out server.key
 openssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500
+```
 
 举个🌰：  
 在服务器运行`tcp2ws 127.0.0.1:22 127.0.0.1:22222`  
