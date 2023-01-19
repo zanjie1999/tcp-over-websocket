@@ -390,8 +390,8 @@ func startWsServer(listenPort string, isSsl bool, sslCrt string, sslKey string){
 
 func main() {
 	arg_num:=len(os.Args)
-	if arg_num < 2 {
-		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nuse wss: ip:port tcp2wsPort server.crt server.key")
+	if arg_num < 3 {
+		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nUse wss: ip:port tcp2wsPort server.crt server.key")
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
 	}
@@ -452,12 +452,18 @@ func main() {
 		} else {
 			ws_addr = serverUrl
 		}
-		l, err := net.Listen("tcp", "0.0.0.0:" + listenPort)
+		match, _ = regexp.MatchString(`^\d+$`, listenPort)
+		listenHostPort := listenPort
+		if match {
+			// 如果没指定监听ip那就全部监听 省掉不必要的防火墙
+			listenHostPort = "0.0.0.0:" + listenPort
+		}
+		l, err := net.Listen("tcp", listenHostPort)
 		if err != nil {
 			log.Fatal("tcp2ws Client Start Error: ", err)
 		}
 		go tcpHandler(l)
-		log.Print("Client Started " +  listenPort + " -> " + ws_addr)
+		log.Print("Client Started " +  listenHostPort + " -> " + ws_addr)
 	}
 	for {
 		if isServer {
