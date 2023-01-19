@@ -451,10 +451,10 @@ func main() {
 		go startWsServer(listenHostPort, isSsl, sslCrt, sslKey)
 		if isSsl {
 			log.Print("Server Started wss://" +  listenHostPort + " -> " + tcpAddr )
-			fmt.Print("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://")
+			fmt.Print("Proxy with Nginx:\nlocation /" + uuid.New().String()[24:] + "/ {\nproxy_pass https://")
 		} else {
 			log.Print("Server Started ws://" +  listenHostPort + " -> " + tcpAddr )
-			fmt.Print("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://")
+			fmt.Print("Proxy with Nginx:\nlocation /" + uuid.New().String()[24:] + "/ {\nproxy_pass http://")
 		}
 		if match {
 			fmt.Print("127.0.0.1:" + listenPort)
