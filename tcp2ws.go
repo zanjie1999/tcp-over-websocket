@@ -424,17 +424,23 @@ func main() {
 		// ws server
 		http.HandleFunc("/", wsHandler)
 		match, _ = regexp.MatchString(`^\d+$`, listenPort)
+		listenHostPort := listenPort
 		if match {
 			// 如果没指定监听ip那就全部监听 省掉不必要的防火墙
-			listenPort = "0.0.0.0:" + listenPort
+			listenHostPort = "0.0.0.0:" + listenPort
 		}
-		go startWsServer(listenPort, isSsl, sslCrt, sslKey)
+		go startWsServer(listenHostPort, isSsl, sslCrt, sslKey)
 		if isSsl {
-			log.Print("Server Started wss://" +  listenPort + " -> " + tcp_addr )
-			fmt.Print("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://" + listenPort)
+			log.Print("Server Started wss://" +  listenHostPort + " -> " + tcp_addr )
+			fmt.Print("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://")
 		} else {
-			log.Print("Server Started ws://" +  listenPort + " -> " + tcp_addr )
-			fmt.Print("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://" + listenPort)
+			log.Print("Server Started ws://" +  listenHostPort + " -> " + tcp_addr )
+			fmt.Print("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://")
+		}
+		if match {
+			fmt.Print("127.0.0.1:" + listenPort)
+		} else {
+			fmt.Print(listenPort)
 		}
 		fmt.Println("/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\naccess_log off;\n}")
 	} else {
