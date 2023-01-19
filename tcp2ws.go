@@ -399,10 +399,11 @@ func startWsServer(listenPort string, isSsl bool, sslCrt string, sslKey string){
 // 又造轮子了 发现给v4的ip加个框也能连诶
 func Tcping(hostname, port string) (int64) {
 	st := time.Now().UnixNano()
-	_, err := net.DialTimeout("tcp", "[" + hostname + "]" + port, 5 * time.Second)
+	c, err := net.DialTimeout("tcp", "[" + hostname + "]" + port, 5 * time.Second)
 	if err != nil {
 		return -1
 	}
+	c.Close()
 	return (time.Now().UnixNano() - st)/1e6
 }
 
