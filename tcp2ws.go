@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v8.0
+// v8.3
 
 package main
 
@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"fmt"
 	"regexp"
@@ -30,9 +31,11 @@ type tcp2wsSparkle struct {
  }
 
 var (
-	tcp_addr string
-	ws_addr string
-	msg_type int = websocket.BinaryMessage
+	tcpAddr string
+	wsAddr string
+	wsAddrIp string
+	wsAddrPort = ""
+	msgType int = websocket.BinaryMessage
 	isServer bool
 	connMap map[string]*tcp2wsSparkle = make(map[string]*tcp2wsSparkle)
 	// go的map不是线程安全的 读写冲突就会直接exit
@@ -118,7 +121,7 @@ func ReadTcp2Ws(uuid string) (bool) {
 				return false
 			}
 			conn.t = time.Now().Unix()
-			if err = wsConn.WriteMessage(msg_type, buf[:length]);err != nil{
+			if err = wsConn.WriteMessage(msgType, buf[:length]);err != nil{
 				log.Print(uuid, " ws write err: ", err)
 				// tcpConn.Close()
 				wsConn.Close()
@@ -183,7 +186,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 					return false
 				}
 			}
-			msg_type = t
+			msgType = t
 			if _, err = tcpConn.Write(buf);err != nil{
 				log.Print(uuid, " tcp write err: ", err)
 				deleteConn(uuid)
@@ -210,6 +213,12 @@ func writeErrorBuf2Ws(uuid string)  {
 		}
 		conn.buf = nil
 	}
+}
+
+// 自定义的Dial连接器，自定义域名解析
+func MeDial(network, address string) (net.Conn, error) {
+	// return net.DialTimeout(network, address, 5 * time.Second)
+	return net.DialTimeout(network, wsAddrIp + wsAddrPort, 5 * time.Second)
 }
 
 func RunServer(wsConn *websocket.Conn) {
@@ -245,7 +254,7 @@ func RunServer(wsConn *websocket.Conn) {
 	if tcpConn == nil {
 		log.Print("new tcp for ", uuid)
 		// call tcp
-		tcpConn, err = net.Dial("tcp", tcp_addr)
+		tcpConn, err = net.Dial("tcp", tcpAddr)
 		if(err != nil) {
 			log.Print("connect to tcp err: ", err)
 			return
@@ -282,8 +291,8 @@ func RunClient(tcpConn net.Conn, uuid string) {
 	}
 	log.Print(uuid, " dial")
 	// call ws
-	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment}
-	wsConn, _, err := dialer.Dial(ws_addr, nil)
+	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment, NetDial: MeDial}
+	wsConn, _, err := dialer.Dial(wsAddr, nil)
 	if err != nil {
 		log.Print("connect to ws err: ", err)
 		if tcpConn != nil {
@@ -387,6 +396,15 @@ func startWsServer(listenPort string, isSsl bool, sslCrt string, sslKey string){
 	}
 }
 
+// 又造轮子了 发现给v4的ip加个框也能连诶
+func Tcping(hostname, port string) (int64) {
+	st := time.Now().UnixNano()
+	_, err := net.DialTimeout("tcp", "[" + hostname + "]" + port, 5 * time.Second)
+	if err != nil {
+		return -1
+	}
+	return (time.Now().UnixNano() - st)/1e6
+}
 
 func main() {
 	arg_num:=len(os.Args)
@@ -417,9 +435,9 @@ func main() {
 		match, _ := regexp.MatchString(`^\d+$`, serverUrl)
 		if match {
 			// 只有端口号默认127.0.0.1
-			tcp_addr = "127.0.0.1:" + serverUrl
+			tcpAddr = "127.0.0.1:" + serverUrl
 		} else {
-			tcp_addr = serverUrl
+			tcpAddr = serverUrl
 		}
 		// ws server
 		http.HandleFunc("/", wsHandler)
@@ -431,10 +449,10 @@ func main() {
 		}
 		go startWsServer(listenHostPort, isSsl, sslCrt, sslKey)
 		if isSsl {
-			log.Print("Server Started wss://" +  listenHostPort + " -> " + tcp_addr )
+			log.Print("Server Started wss://" +  listenHostPort + " -> " + tcpAddr )
 			fmt.Print("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass https://")
 		} else {
-			log.Print("Server Started ws://" +  listenHostPort + " -> " + tcp_addr )
+			log.Print("Server Started ws://" +  listenHostPort + " -> " + tcpAddr )
 			fmt.Print("Proxy with Nginx:\nlocation /ws/ {\nproxy_pass http://")
 		}
 		if match {
@@ -445,12 +463,12 @@ func main() {
 		fmt.Println("/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\naccess_log off;\n}")
 	} else {
 		// 客户端
-		if match, _ := regexp.MatchString("^http://.*", serverUrl); match {
-			ws_addr = "ws" + serverUrl[4:]
-		} else if match, _ := regexp.MatchString("^https://.*", serverUrl); match {
-			ws_addr = "wss" + serverUrl[5:]
+		if serverUrl[:5] == "https"{
+			wsAddr = "wss" + serverUrl[5:]
+		} else if serverUrl[:4] == "http" {
+			wsAddr = "ws" + serverUrl[4:]
 		} else {
-			ws_addr = serverUrl
+			wsAddr = serverUrl
 		}
 		match, _ = regexp.MatchString(`^\d+$`, listenPort)
 		listenHostPort := listenPort
@@ -462,8 +480,50 @@ func main() {
 		if err != nil {
 			log.Fatal("tcp2ws Client Start Error: ", err)
 		}
+		// 将ws服务端域名对应的ip缓存起来，避免多次请求dns或dns爆炸导致无法连接
+		u, err := url.Parse(wsAddr)
+		if err != nil {
+			log.Fatal("tcp2ws Client Start Error: ", err)
+		}
+		// 确定端口号，下面域名tcping要用
+		if u.Port() != "" {
+			wsAddrPort = ":" + u.Port()
+		} else if wsAddr[:3] == "wss" {
+			wsAddrPort = ":443"
+		} else {
+			wsAddrPort = ":80"
+		}
+		if u.Host[0] == '[' {
+			// ipv6
+			wsAddrIp = "[" + u.Hostname() + "]"
+			log.Print("tcping " + u.Hostname() + " ", Tcping(u.Hostname(), wsAddrPort), "ms")
+		} else if match, _ = regexp.MatchString(`^\d+.\d+.\d+.\d+$`, u.Hostname()); match {
+			// ipv4
+			wsAddrIp = u.Hostname()
+			log.Print("tcping " + wsAddrIp + " ", Tcping(wsAddrIp, wsAddrPort), "ms")
+		} else {
+			// 域名，需要解析，ip优选
+			log.Print("nslookup " + u.Hostname())
+			ns, err := net.LookupHost(u.Hostname())
+			if err != nil {
+				log.Fatal("tcp2ws Client Start Error: ", err)
+			}
+			wsAddrIp = ns[0]
+			var lastPing int64 = 5000 
+			for _, n := range ns {
+				nowPing := Tcping(n, wsAddrPort)
+				log.Print("tcping " + n + " ", nowPing, "ms")
+				if nowPing != -1 && nowPing < lastPing {
+					wsAddrIp = n
+					lastPing = nowPing
+				}
+			}
+
+			log.Print("Use IP " + wsAddrIp + " for " + u.Hostname())
+		}
+
 		go tcpHandler(l)
-		log.Print("Client Started " +  listenHostPort + " -> " + ws_addr)
+		log.Print("Client Started " +  listenHostPort + " -> " + wsAddr)
 	}
 	for {
 		if isServer {
@@ -483,6 +543,7 @@ func main() {
 				}
 			}
 		} else {
+			// 按 ctrl + c 退出，会阻塞 
 			c := make(chan os.Signal, 1)
 			signal.Notify(c, os.Interrupt, os.Kill)
 			<-c
