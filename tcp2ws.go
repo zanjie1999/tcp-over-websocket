@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v8.3
+// v8.4
 
 package main
 
@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"sync"
 	"crypto/tls"
+	"context"
 )
 
 type tcp2wsSparkle struct {
@@ -410,6 +411,7 @@ func Tcping(hostname, port string) (int64) {
 func main() {
 	arg_num:=len(os.Args)
 	if arg_num < 3 {
+		fmt.Println("Tcp over WebSocket (tcp2ws) v8.4\nhttps://github.com/zanjie1999/tcp-over-websocket")
 		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nUse wss: ip:port tcp2wsPort server.crt server.key")
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
@@ -507,7 +509,21 @@ func main() {
 			log.Print("nslookup " + u.Hostname())
 			ns, err := net.LookupHost(u.Hostname())
 			if err != nil {
-				log.Fatal("tcp2ws Client Start Error: ", err)
+				log.Print("System DNS Fail: ", err)
+				// 在Android的Termux上似乎不能正确的使用系统DNS解析
+				r := &net.Resolver{
+					PreferGo: true,
+					Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+						d := net.Dialer{
+							Timeout: 5 * time.Second,
+						}
+						return d.DialContext(ctx, network, "208.67.222.222:5353")
+					},
+				}
+				ns, err = r.LookupHost(context.Background(), u.Hostname())
+				if err != nil {
+					log.Fatal("tcp2ws Client Start Error: ", err)
+				}
 			}
 			wsAddrIp = ns[0]
 			var lastPing int64 = 5000 
