@@ -1,44 +1,49 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// v8.4
+// v9.0
 
 package main
 
 import (
-	"github.com/gorilla/websocket"
-	"github.com/google/uuid"
+	"context"
+	"crypto/tls"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"fmt"
-	"regexp"
-	"time"
 	"os/signal"
+	"regexp"
+	"strings"
 	"sync"
-	"crypto/tls"
-	"context"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 type tcp2wsSparkle struct {
+	isUdp   bool
+	udpConn *net.UDPConn
+	udpAddr *net.UDPAddr
 	tcpConn net.Conn
-	wsConn *websocket.Conn
-	uuid string
-	del bool
-	buf [][]byte
-	t int64
- }
+	wsConn  *websocket.Conn
+	uuid    string
+	del     bool
+	buf     [][]byte
+	t       int64
+}
 
 var (
-	tcpAddr string
-	wsAddr string
-	wsAddrIp string
-	wsAddrPort = ""
-	msgType int = websocket.BinaryMessage
-	isServer bool
-	connMap map[string]*tcp2wsSparkle = make(map[string]*tcp2wsSparkle)
+	tcpAddr    string
+	wsAddr     string
+	wsAddrIp   string
+	wsAddrPort     = ""
+	msgType    int = websocket.BinaryMessage
+	isServer   bool
+	connMap    map[string]*tcp2wsSparkle = make(map[string]*tcp2wsSparkle)
 	// go的map不是线程安全的 读写冲突就会直接exit
 	connMapLock *sync.RWMutex = new(sync.RWMutex)
 )
@@ -46,13 +51,13 @@ var (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool{ return true },
+	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
 func getConn(uuid string) (*tcp2wsSparkle, bool) {
 	connMapLock.RLock()
 	defer connMapLock.RUnlock()
-	conn, haskey := connMap[uuid];
+	conn, haskey := connMap[uuid]
 	return conn, haskey
 }
 
@@ -63,10 +68,13 @@ func setConn(uuid string, conn *tcp2wsSparkle) {
 }
 
 func deleteConn(uuid string) {
-	if conn, haskey := getConn(uuid); haskey && conn != nil && !conn.del{
+	if conn, haskey := getConn(uuid); haskey && conn != nil && !conn.del {
 		connMapLock.Lock()
 		defer connMapLock.Unlock()
 		conn.del = true
+		if conn.udpConn != nil {
+			conn.udpConn.Close()
+		}
 		if conn.tcpConn != nil {
 			conn.tcpConn.Close()
 		}
@@ -80,7 +88,35 @@ func deleteConn(uuid string) {
 	// panic("炸一下试试")
 }
 
-func ReadTcp2Ws(uuid string) (bool) {
+func DialNewWs(uuid string) bool {
+	log.Print("dial ", uuid)
+	// call ws
+	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment, NetDial: MeDial}
+	wsConn, _, err := dialer.Dial(wsAddr, nil)
+	if err != nil {
+		log.Print("connect to ws err: ", err)
+		return false
+	}
+	// send uuid
+	if err := wsConn.WriteMessage(websocket.TextMessage, []byte(uuid)); err != nil {
+		log.Print("udp send ws uuid err: ", err)
+		wsConn.Close()
+		return false
+	}
+	// update
+	if conn, haskey := getConn(uuid); haskey {
+		if conn.wsConn != nil {
+			conn.wsConn.Close()
+		}
+		conn.wsConn = wsConn
+		conn.t = time.Now().Unix()
+		writeErrorBuf2Ws(conn)
+	}
+	return true
+}
+
+// 将tcp或udp的数据转发到ws
+func ReadTcp2Ws(uuid string) bool {
 	defer func() {
 		err := recover()
 		if err != nil {
@@ -89,31 +125,57 @@ func ReadTcp2Ws(uuid string) (bool) {
 		}
 	}()
 
-	conn, haskey := getConn(uuid);
+	conn, haskey := getConn(uuid)
 	if !haskey {
 		return false
 	}
 	buf := make([]byte, 500000)
 	tcpConn := conn.tcpConn
+	udpConn := conn.udpConn
+	isUdp := conn.isUdp
 	for {
-		if conn.del || tcpConn == nil {
+		if conn.del || !isUdp && tcpConn == nil || isUdp && udpConn == nil {
 			return false
 		}
-		length,err := tcpConn.Read(buf)
+		var length int
+		var err error
+		if isUdp {
+			length, conn.udpAddr, err = udpConn.ReadFromUDP(buf)
+			// 客户端udp先收到内容再创建ws连接 服务端不可能进入这里
+			if conn.wsConn == nil {
+				if !DialNewWs(uuid) {
+					// ws连接失败 存起来 下次重试
+					if conn.buf == nil {
+						conn.buf = [][]byte{buf[:length]}
+					} else {
+						conn.buf = append(conn.buf, buf[:length])
+					}
+					continue
+				}
+				go ReadWs2TcpClient(uuid, true)
+			}
+		} else {
+			length, err = tcpConn.Read(buf)
+		}
 		if err != nil {
 			if conn, haskey := getConn(uuid); haskey && !conn.del {
 				// tcp中断 关闭所有连接 关过的就不用关了
 				if err.Error() != "EOF" {
-					log.Print(uuid, " tcp read err: ", err)
+					if isUdp {
+						log.Print(uuid, " udp read err: ", err)
+					} else {
+						log.Print(uuid, " tcp read err: ", err)
+					}
 				}
 				deleteConn(uuid)
 				return false
 			}
 			return false
 		}
+		// log.Print(uuid, " ws send: ", length)
 		if length > 0 {
 			// 因为tcpConn.Read会阻塞 所以要从connMap中获取最新的wsConn
-			conn, haskey := getConn(uuid);
+			conn, haskey := getConn(uuid)
 			if !haskey || conn.del {
 				return false
 			}
@@ -122,12 +184,12 @@ func ReadTcp2Ws(uuid string) (bool) {
 				return false
 			}
 			conn.t = time.Now().Unix()
-			if err = wsConn.WriteMessage(msgType, buf[:length]);err != nil{
+			if err = wsConn.WriteMessage(msgType, buf[:length]); err != nil {
 				log.Print(uuid, " ws write err: ", err)
 				// tcpConn.Close()
 				wsConn.Close()
 				// save send error buf
-				if conn.buf == nil{
+				if conn.buf == nil {
 					conn.buf = [][]byte{buf[:length]}
 				} else {
 					conn.buf = append(conn.buf, buf[:length])
@@ -135,13 +197,14 @@ func ReadTcp2Ws(uuid string) (bool) {
 				// 此处无需中断 等着新的wsConn 或是被 断开连接 / 回收 即可
 			}
 			// if !isServer {
-			// 	log.Print(uuid, " send: ", length)	
+			// 	log.Print(uuid, " send: ", length)
 			// }
 		}
 	}
 }
 
-func ReadWs2Tcp(uuid string) (bool) {
+// 将ws的数据转发到tcp或udp
+func ReadWs2Tcp(uuid string) bool {
 	defer func() {
 		err := recover()
 		if err != nil {
@@ -150,14 +213,16 @@ func ReadWs2Tcp(uuid string) (bool) {
 		}
 	}()
 
-	conn, haskey := getConn(uuid);
+	conn, haskey := getConn(uuid)
 	if !haskey {
 		return false
 	}
 	wsConn := conn.wsConn
 	tcpConn := conn.tcpConn
+	udpConn := conn.udpConn
+	isUdp := conn.isUdp
 	for {
-		if conn.del || tcpConn == nil || wsConn == nil {
+		if conn.del || !isUdp && tcpConn == nil || isUdp && udpConn == nil || wsConn == nil {
 			return false
 		}
 		t, buf, err := wsConn.ReadMessage()
@@ -170,6 +235,7 @@ func ReadWs2Tcp(uuid string) (bool) {
 			}
 			return false
 		}
+		// log.Print(uuid, " ws recv: ", len(buf))
 		if len(buf) > 0 {
 			conn.t = time.Now().Unix()
 			if t == websocket.TextMessage {
@@ -182,33 +248,62 @@ func ReadWs2Tcp(uuid string) (bool) {
 					connMapLock.Lock()
 					defer connMapLock.Unlock()
 					wsConn.Close()
-					tcpConn.Close()
+					if isUdp {
+						udpConn.Close()
+					} else {
+						tcpConn.Close()
+					}
 					delete(connMap, uuid)
 					return false
 				}
 			}
 			msgType = t
-			if _, err = tcpConn.Write(buf);err != nil{
-				log.Print(uuid, " tcp write err: ", err)
-				deleteConn(uuid)
-				return false
+			if isUdp {
+				if isServer {
+					if _, err = udpConn.Write(buf); err != nil {
+						log.Print(uuid, " udp write err: ", err)
+						deleteConn(uuid)
+						return false
+					}
+				} else {
+					// 客户端作为udp服务端回复需要udp客户端发送数据时提供的udpAddr
+					if _, err = udpConn.WriteToUDP(buf, conn.udpAddr); err != nil {
+						log.Print(uuid, " udp write err: ", err)
+						deleteConn(uuid)
+						return false
+					}
+				}
+			} else {
+				if _, err = tcpConn.Write(buf); err != nil {
+					log.Print(uuid, " tcp write err: ", err)
+					deleteConn(uuid)
+					return false
+				}
 			}
-			// if !isServer {
-			// 	log.Print(uuid, " recv: ", len(buf))	
-			// }
 		}
 	}
 }
 
-func ReadWs2TcpClient(uuid string) {
+// 多了一个被动断开后自动重连的功能
+func ReadWs2TcpClient(uuid string, isUdp bool) {
 	if ReadWs2Tcp(uuid) {
+		log.Print(uuid, " ws Boom!")
 		// error return  re call ws
-		RunClient(nil, uuid)
+		if !isUdp {
+			RunClient(nil, uuid)
+		} else {
+			// 删除wsConn 下次收到udp数据时会重新建立ws连接
+			conn, haskey := getConn(uuid)
+			if haskey {
+				conn.wsConn = nil
+			}
+		}
 	}
 }
 
-func writeErrorBuf2Ws(uuid string)  {
-	if conn, haskey := getConn(uuid); haskey && conn.buf != nil {
+// 将没写成的内容写到ws
+func writeErrorBuf2Ws(conn *tcp2wsSparkle) {
+	if conn != nil {
 		for i := 0; i < len(conn.buf); i++ {
 			conn.wsConn.WriteMessage(websocket.BinaryMessage, conn.buf[i])
 		}
@@ -219,9 +314,10 @@ func writeErrorBuf2Ws(uuid string)  {
 // 自定义的Dial连接器，自定义域名解析
 func MeDial(network, address string) (net.Conn, error) {
 	// return net.DialTimeout(network, address, 5 * time.Second)
-	return net.DialTimeout(network, wsAddrIp + wsAddrPort, 5 * time.Second)
+	return net.DialTimeout(network, wsAddrIp+wsAddrPort, 5*time.Second)
 }
 
+// 服务端 是tcp还是udp连接是客户端发过来的
 func RunServer(wsConn *websocket.Conn) {
 	defer func() {
 		err := recover()
@@ -230,49 +326,75 @@ func RunServer(wsConn *websocket.Conn) {
 		}
 	}()
 
+	var isUdp bool
+	var udpConn *net.UDPConn
 	var tcpConn net.Conn
 	var uuid string
 	// read uuid to get from connMap
 	t, buf, err := wsConn.ReadMessage()
-	if err != nil || t == -1 {
-		log.Print(" ws uuid read err: ", err)
+	if err != nil || t == -1 || len(buf) == 0 {
+		log.Print("ws uuid read err: ", err)
 		wsConn.Close()
 		return
 	}
-	if len(buf) > 0 {
-		if t == websocket.TextMessage {
-			uuid = string(buf)
+	if t == websocket.TextMessage {
+		uuid = string(buf)
+		if uuid == "" {
+			log.Print("ws uuid read empty")
+			return
+		}
+		// U 开头的uuid为udp连接
+		isUdp = strings.HasPrefix(uuid, "U")
+		if conn, haskey := getConn(uuid); haskey {
 			// get
-			if conn, haskey := getConn(uuid); haskey {
-				tcpConn = conn.tcpConn
-				conn.wsConn.Close()
-				conn.wsConn = wsConn
-				writeErrorBuf2Ws(uuid)
-			}
+			udpConn = conn.udpConn
+			tcpConn = conn.tcpConn
+			conn.wsConn.Close()
+			conn.wsConn = wsConn
+			writeErrorBuf2Ws(conn)
 		}
 	}
 
-	if tcpConn == nil {
+	// uuid没有找到 新连接
+	if isUdp && udpConn == nil {
+		// call new udp
+		log.Print("new udp for ", uuid)
+		udpAddr, err := net.ResolveUDPAddr("udp4", tcpAddr)
+		if err != nil {
+			log.Print("resolve udp addr err: ", err)
+			return
+		}
+		udpConn, err = net.DialUDP("udp", nil, udpAddr)
+		if err != nil {
+			log.Print("connect to udp err: ", err)
+			return
+		}
+
+		// save
+		setConn(uuid, &tcp2wsSparkle{true, udpConn, nil, nil, wsConn, uuid, false, nil, time.Now().Unix()})
+
+		go ReadTcp2Ws(uuid)
+	} else if !isUdp && tcpConn == nil {
+		// call new tcp
 		log.Print("new tcp for ", uuid)
-		// call tcp
 		tcpConn, err = net.Dial("tcp", tcpAddr)
-		if(err != nil) {
+		if err != nil {
 			log.Print("connect to tcp err: ", err)
 			return
 		}
-		if uuid != "" {
-			// save
-			setConn(uuid, &tcp2wsSparkle {tcpConn, wsConn, uuid, false, nil, time.Now().Unix()})
-		}
+
+		// save
+		setConn(uuid, &tcp2wsSparkle{false, nil, nil, tcpConn, wsConn, uuid, false, nil, time.Now().Unix()})
 
 		go ReadTcp2Ws(uuid)
 	} else {
 		log.Print("uuid finded ", uuid)
 	}
-	
+
 	go ReadWs2Tcp(uuid)
 }
 
+// tcp客户端
 func RunClient(tcpConn net.Conn, uuid string) {
 	defer func() {
 		err := recover()
@@ -280,6 +402,7 @@ func RunClient(tcpConn net.Conn, uuid string) {
 			log.Print("client Boom!\n", err)
 		}
 	}()
+
 	// conn is close?
 	if tcpConn == nil {
 		if conn, haskey := getConn(uuid); haskey {
@@ -290,51 +413,53 @@ func RunClient(tcpConn net.Conn, uuid string) {
 			return
 		}
 	}
-	log.Print(uuid, " dial")
-	// call ws
-	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment, NetDial: MeDial}
-	wsConn, _, err := dialer.Dial(wsAddr, nil)
-	if err != nil {
-		log.Print("connect to ws err: ", err)
-		if tcpConn != nil {
-			tcpConn.Close()
-		}
-		return
-	}
-	// send uuid
-	if err := wsConn.WriteMessage(websocket.TextMessage, []byte(uuid));err != nil{
-		log.Print("send ws uuid err: ", err)
-		if tcpConn != nil {
-			tcpConn.Close()
-		}
-		wsConn.Close()
-		return
-	}
-	
 	// save conn
 	if tcpConn != nil {
-		// save
-		setConn(uuid, &tcp2wsSparkle {tcpConn, wsConn, uuid, false, nil, time.Now().Unix()})
-	} else {
-		// update
-		if conn, haskey := getConn(uuid); haskey {
-			conn.wsConn.Close()
-			conn.wsConn = wsConn
-			conn.t = time.Now().Unix()
-			writeErrorBuf2Ws(uuid)
-		}
+		setConn(uuid, &tcp2wsSparkle{false, nil, nil, tcpConn, nil, uuid, false, nil, time.Now().Unix()})
 	}
+	DialNewWs(uuid)
 
-	go ReadWs2TcpClient(uuid)
+	go ReadWs2TcpClient(uuid, false)
 	if tcpConn != nil {
+		// 不是重连
 		go ReadTcp2Ws(uuid)
 	}
 }
 
+// udp客户端
+func RunClientUdp(listenHostPort string) {
+	defer func() {
+		err := recover()
+		if err != nil {
+			log.Print("udp client Boom!\n", err)
+		}
+	}()
+	uuid := "U" + uuid.New().String()[32:]
+	for {
+		log.Print("Create UDP Listen: ", listenHostPort)
+		// 开udp监听
+		udpAddr, err := net.ResolveUDPAddr("udp4", listenHostPort)
+		if err != nil {
+			log.Print("UDP Addr Resolve Error: ", err)
+			return
+		}
+		udpConn, err := net.ListenUDP("udp", udpAddr)
+		if err != nil {
+			log.Print("UDP Listen Start Error: ", err)
+			return
+		}
 
+		// save
+		setConn(uuid, &tcp2wsSparkle{true, udpConn, nil, nil, nil, uuid, false, nil, time.Now().Unix()})
+
+		// 收到内容后会开ws连接并拿到UDPAddr 阻塞
+		ReadTcp2Ws(uuid)
+	}
+
+}
 
 // 响应ws请求
-func wsHandler(w http.ResponseWriter , r *http.Request){
+func wsHandler(w http.ResponseWriter, r *http.Request) {
 	forwarded := r.Header.Get("X-Forwarded-For")
 	// 不是ws的请求返回index.html 假装是一个静态服务器
 	if r.Header.Get("Upgrade") != "websocket" {
@@ -357,18 +482,18 @@ func wsHandler(w http.ResponseWriter , r *http.Request){
 	}
 
 	// ws协议握手
-	conn, err := upgrader.Upgrade(w,r,nil)
-	if err != nil{
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
 		log.Print("ws upgrade err: ", err)
-		return 
+		return
 	}
 
 	// 新线程hold住这条连接
-	go RunServer(conn) 
+	go RunServer(conn)
 }
 
 // 响应tcp
-func tcpHandler(listener net.Listener){
+func tcpHandler(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -379,12 +504,12 @@ func tcpHandler(listener net.Listener){
 		log.Print("new tcp conn: ")
 
 		// 新线程hold住这条连接
-		go RunClient(conn, uuid.New().String()[32:])
+		go RunClient(conn, uuid.New().String()[31:])
 	}
 }
 
 // 启动ws服务
-func startWsServer(listenPort string, isSsl bool, sslCrt string, sslKey string){
+func startWsServer(listenPort string, isSsl bool, sslCrt string, sslKey string) {
 	var err error = nil
 	if isSsl {
 		fmt.Println("use ssl cert: " + sslCrt + " " + sslKey)
@@ -398,20 +523,20 @@ func startWsServer(listenPort string, isSsl bool, sslCrt string, sslKey string){
 }
 
 // 又造轮子了 发现给v4的ip加个框也能连诶
-func Tcping(hostname, port string) (int64) {
+func Tcping(hostname, port string) int64 {
 	st := time.Now().UnixNano()
-	c, err := net.DialTimeout("tcp", "[" + hostname + "]" + port, 5 * time.Second)
+	c, err := net.DialTimeout("tcp", "["+hostname+"]"+port, 5*time.Second)
 	if err != nil {
 		return -1
 	}
 	c.Close()
-	return (time.Now().UnixNano() - st)/1e6
+	return (time.Now().UnixNano() - st) / 1e6
 }
 
 func main() {
-	arg_num:=len(os.Args)
+	arg_num := len(os.Args)
 	if arg_num < 3 {
-		fmt.Println("Tcp over WebSocket (tcp2ws) v8.4\nhttps://github.com/zanjie1999/tcp-over-websocket")
+		fmt.Println("TCP over WebSocket (tcp2ws) with UDP support v9.0\nhttps://github.com/zanjie1999/tcp-over-websocket")
 		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nUse wss: ip:port tcp2wsPort server.crt server.key")
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
@@ -452,10 +577,10 @@ func main() {
 		}
 		go startWsServer(listenHostPort, isSsl, sslCrt, sslKey)
 		if isSsl {
-			log.Print("Server Started wss://" +  listenHostPort + " -> " + tcpAddr )
+			log.Print("Server Started wss://" + listenHostPort + " -> " + tcpAddr)
 			fmt.Print("Proxy with Nginx:\nlocation /" + uuid.New().String()[24:] + "/ {\nproxy_pass https://")
 		} else {
-			log.Print("Server Started ws://" +  listenHostPort + " -> " + tcpAddr )
+			log.Print("Server Started ws://" + listenHostPort + " -> " + tcpAddr)
 			fmt.Print("Proxy with Nginx:\nlocation /" + uuid.New().String()[24:] + "/ {\nproxy_pass http://")
 		}
 		if match {
@@ -466,7 +591,7 @@ func main() {
 		fmt.Println("/;\nproxy_read_timeout 3600;\nproxy_http_version 1.1;\nproxy_set_header Upgrade $http_upgrade;\nproxy_set_header Connection \"Upgrade\";\nproxy_set_header X-Forwarded-For $remote_addr;\naccess_log off;\n}")
 	} else {
 		// 客户端
-		if serverUrl[:5] == "https"{
+		if serverUrl[:5] == "https" {
 			wsAddr = "wss" + serverUrl[5:]
 		} else if serverUrl[:4] == "http" {
 			wsAddr = "ws" + serverUrl[4:]
@@ -499,11 +624,11 @@ func main() {
 		if u.Host[0] == '[' {
 			// ipv6
 			wsAddrIp = "[" + u.Hostname() + "]"
-			log.Print("tcping " + u.Hostname() + " ", Tcping(u.Hostname(), wsAddrPort), "ms")
+			log.Print("tcping "+u.Hostname()+" ", Tcping(u.Hostname(), wsAddrPort), "ms")
 		} else if match, _ = regexp.MatchString(`^\d+.\d+.\d+.\d+$`, u.Hostname()); match {
 			// ipv4
 			wsAddrIp = u.Hostname()
-			log.Print("tcping " + wsAddrIp + " ", Tcping(wsAddrIp, wsAddrPort), "ms")
+			log.Print("tcping "+wsAddrIp+" ", Tcping(wsAddrIp, wsAddrPort), "ms")
 		} else {
 			// 域名，需要解析，ip优选
 			log.Print("nslookup " + u.Hostname())
@@ -526,10 +651,10 @@ func main() {
 				}
 			}
 			wsAddrIp = ns[0]
-			var lastPing int64 = 5000 
+			var lastPing int64 = 5000
 			for _, n := range ns {
 				nowPing := Tcping(n, wsAddrPort)
-				log.Print("tcping " + n + " ", nowPing, "ms")
+				log.Print("tcping "+n+" ", nowPing, "ms")
 				if nowPing != -1 && nowPing < lastPing {
 					wsAddrIp = n
 					lastPing = nowPing
@@ -540,32 +665,39 @@ func main() {
 		}
 
 		go tcpHandler(l)
-		log.Print("Client Started " +  listenHostPort + " -> " + wsAddr)
+
+		// 启动一个udp监听用于udp转发
+		go RunClientUdp(listenHostPort)
+
+		log.Print("Client Started " + listenHostPort + " -> " + wsAddr)
 	}
 	for {
 		if isServer {
 			// 心跳间隔2分钟
 			time.Sleep(2 * 60 * time.Second)
-			nowTimeCut := time.Now().Unix() - 2 * 60
+			nowTimeCut := time.Now().Unix() - 2*60
 			// check ws
 			for k, i := range connMap {
 				// 如果超过2分钟没有收到消息，才发心跳，避免读写冲突
 				if i.t < nowTimeCut {
-					if err := i.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkle"));err != nil{
-						log.Print(i.uuid, " timeout close")
-						i.tcpConn.Close()
+					if i.isUdp {
+						// udp不需要心跳 超时就关闭
+						log.Print(i.uuid, " udp timeout close")
+						deleteConn(k)
+					} else if err := i.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkle")); err != nil {
+						log.Print(i.uuid, " tcp timeout close")
 						i.wsConn.Close()
 						deleteConn(k)
 					}
 				}
 			}
 		} else {
-			// 按 ctrl + c 退出，会阻塞 
+			// 按 ctrl + c 退出，会阻塞
 			c := make(chan os.Signal, 1)
 			signal.Notify(c, os.Interrupt, os.Kill)
 			<-c
 			fmt.Println()
-    		log.Print("quit...")
+			log.Print("quit...")
 			for k, _ := range connMap {
 				deleteConn(k)
 			}

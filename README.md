@@ -1,11 +1,18 @@
-# Tcp over WebSocket (TCP to WebSocket)
+# Tcp over WebSocket (TCP to WebSocket, tcp2ws)
 本工具能 使用WebSocket创建隧道，实现TCP端口转发  
+在v9.0及以后 的版本支持了UDP，也就是说现在可以实现UDP端口转发了，也就是UDP over WebSocket
+(UDP to WebSocket, udp2ws)  
+
 ## 因为经常修改优化，所以请Star，不要Fork  
 ### 至于这样脱裤子放屁的操作有什么用？  
 举个例子，一个服务器只能通过cdn的http转发（或者https），它也不能联网，这时你就可以利用此工具将需要转发的端口（比如22）转换成ws协议（http）来传输，再去Nginx里面配一个反向代理，那么当本客户端访问Nginx提供的服务的特定路径时将反代到本服务端，实现内网穿透进行端口转发  
 当然Nginx不是必须的，直接把监听端口开放到公网上也行
 这时防火墙仅仅发现你连接了一个WebSocket而已
-并且在网络不稳定时，断开的ws会自动重连，保持着转发的tcp连接（断开ws超过2分钟tcp连接将被断开）
+并且在网络不稳定时，断开的ws会自动重连，保持着转发的tcp连接（断开ws超过2分钟tcp连接将被断开）  
+
+### 那为什么要支持UDP呢？
+UDP是不可靠的，所以在传输过程中可能会丢包，但是这个工具会自动重传丢失的数据包  
+例如用做Dns转发，WebSocket会在客户端发送UDP数据包时才创建连接，并且在2分钟超时后自动断开，既保证了连接稳定性，又不会一直挂着连接占用资源
 
 ## 如何使用
 在右边Releases中选择你使用的平台的程序来运行  
