@@ -14,10 +14,9 @@ go build
 move tcp2ws build\tcp2ws-linux-i386
 SET GOARCH=amd64
 go build
-zip tcp2ws-linux.zip tcp2ws
-cp kazari.png build\tcp2ws-zip-linux.png
-cat tcp2ws-linux.zip >> build\tcp2ws-zip-linux.png
-rm tcp2ws-linux.zip
+7z\7z a tcp2ws-linux.zip tcp2ws
+copy /b kazari.png+tcp2ws-linux.zip build\tcp2ws-zip-linux.png
+del tcp2ws-linux.zip
 move tcp2ws build\tcp2ws-linux
 SET GOARCH=arm
 go build

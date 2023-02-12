@@ -1,7 +1,8 @@
 # Tcp over WebSocket (TCP to WebSocket, tcp2ws)
 本工具能 使用WebSocket创建隧道，实现TCP端口转发  
-在v9.0及以后 的版本支持了UDP，也就是说现在可以实现UDP端口转发了，也就是UDP over WebSocket
-(UDP to WebSocket, udp2ws)  
+在v9.0及以后 的版本支持了UDP，也就是说现在可以实现UDP端口转发了
+也就是UDP over WebSocket (UDP to WebSocket, udp2ws) 并没有独立成新程序，写在一起了  
+启动时会同时转发指定的端口的TCP和UDP流量  
 
 ## 因为经常修改优化，所以请Star，不要Fork  
 ### 至于这样脱裤子放屁的操作有什么用？  
