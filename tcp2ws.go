@@ -85,13 +85,12 @@ func deleteConn(uuid string) {
 		}
 		delete(connMap, uuid)
 	}
-	// panic("炸一下试试")
 }
 
-func DialNewWs(uuid string) bool {
+func dialNewWs(uuid string) bool {
 	log.Print("dial ", uuid)
 	// call ws
-	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment, NetDial: MeDial}
+	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment, NetDial: meDial}
 	wsConn, _, err := dialer.Dial(wsAddr, nil)
 	if err != nil {
 		log.Print("connect to ws err: ", err)
@@ -116,12 +115,12 @@ func DialNewWs(uuid string) bool {
 }
 
 // 将tcp或udp的数据转发到ws
-func ReadTcp2Ws(uuid string) bool {
+func readTcp2Ws(uuid string) bool {
 	defer func() {
 		err := recover()
 		if err != nil {
 			log.Print(uuid, " tcp -> ws Boom!\n", err)
-			ReadTcp2Ws(uuid)
+			readTcp2Ws(uuid)
 		}
 	}()
 
@@ -143,7 +142,7 @@ func ReadTcp2Ws(uuid string) bool {
 			length, conn.udpAddr, err = udpConn.ReadFromUDP(buf)
 			// 客户端udp先收到内容再创建ws连接 服务端不可能进入这里
 			if conn.wsConn == nil {
-				if !DialNewWs(uuid) {
+				if !dialNewWs(uuid) {
 					// ws连接失败 存起来 下次重试
 					if conn.buf == nil {
 						conn.buf = [][]byte{buf[:length]}
@@ -152,7 +151,7 @@ func ReadTcp2Ws(uuid string) bool {
 					}
 					continue
 				}
-				go ReadWs2TcpClient(uuid, true)
+				go readWs2TcpClient(uuid, true)
 			}
 		} else {
 			length, err = tcpConn.Read(buf)
@@ -204,12 +203,12 @@ func ReadTcp2Ws(uuid string) bool {
 }
 
 // 将ws的数据转发到tcp或udp
-func ReadWs2Tcp(uuid string) bool {
+func readWs2Tcp(uuid string) bool {
 	defer func() {
 		err := recover()
 		if err != nil {
 			log.Print(uuid, " ws -> tcp Boom!\n", err)
-			ReadWs2Tcp(uuid)
+			readWs2Tcp(uuid)
 		}
 	}()
 
@@ -285,12 +284,12 @@ func ReadWs2Tcp(uuid string) bool {
 }
 
 // 多了一个被动断开后自动重连的功能
-func ReadWs2TcpClient(uuid string, isUdp bool) {
-	if ReadWs2Tcp(uuid) {
+func readWs2TcpClient(uuid string, isUdp bool) {
+	if readWs2Tcp(uuid) {
 		log.Print(uuid, " ws Boom!")
 		// error return  re call ws
 		if !isUdp {
-			RunClient(nil, uuid)
+			runClient(nil, uuid)
 		} else {
 			// 删除wsConn 下次收到udp数据时会重新建立ws连接
 			conn, haskey := getConn(uuid)
@@ -312,13 +311,13 @@ func writeErrorBuf2Ws(conn *tcp2wsSparkle) {
 }
 
 // 自定义的Dial连接器，自定义域名解析
-func MeDial(network, address string) (net.Conn, error) {
+func meDial(network, address string) (net.Conn, error) {
 	// return net.DialTimeout(network, address, 5 * time.Second)
 	return net.DialTimeout(network, wsAddrIp+wsAddrPort, 5*time.Second)
 }
 
 // 服务端 是tcp还是udp连接是客户端发过来的
-func RunServer(wsConn *websocket.Conn) {
+func runServer(wsConn *websocket.Conn) {
 	defer func() {
 		err := recover()
 		if err != nil {
@@ -373,7 +372,7 @@ func RunServer(wsConn *websocket.Conn) {
 		// save
 		setConn(uuid, &tcp2wsSparkle{true, udpConn, nil, nil, wsConn, uuid, false, nil, time.Now().Unix()})
 
-		go ReadTcp2Ws(uuid)
+		go readTcp2Ws(uuid)
 	} else if !isUdp && tcpConn == nil {
 		// call new tcp
 		log.Print("new tcp for ", uuid)
@@ -386,16 +385,16 @@ func RunServer(wsConn *websocket.Conn) {
 		// save
 		setConn(uuid, &tcp2wsSparkle{false, nil, nil, tcpConn, wsConn, uuid, false, nil, time.Now().Unix()})
 
-		go ReadTcp2Ws(uuid)
+		go readTcp2Ws(uuid)
 	} else {
 		log.Print("uuid finded ", uuid)
 	}
 
-	go ReadWs2Tcp(uuid)
+	go readWs2Tcp(uuid)
 }
 
 // tcp客户端
-func RunClient(tcpConn net.Conn, uuid string) {
+func runClient(tcpConn net.Conn, uuid string) {
 	defer func() {
 		err := recover()
 		if err != nil {
@@ -417,17 +416,17 @@ func RunClient(tcpConn net.Conn, uuid string) {
 	if tcpConn != nil {
 		setConn(uuid, &tcp2wsSparkle{false, nil, nil, tcpConn, nil, uuid, false, nil, time.Now().Unix()})
 	}
-	DialNewWs(uuid)
+	dialNewWs(uuid)
 
-	go ReadWs2TcpClient(uuid, false)
+	go readWs2TcpClient(uuid, false)
 	if tcpConn != nil {
 		// 不是重连
-		go ReadTcp2Ws(uuid)
+		go readTcp2Ws(uuid)
 	}
 }
 
 // udp客户端
-func RunClientUdp(listenHostPort string) {
+func runClientUdp(listenHostPort string) {
 	defer func() {
 		err := recover()
 		if err != nil {
@@ -453,7 +452,7 @@ func RunClientUdp(listenHostPort string) {
 		setConn(uuid, &tcp2wsSparkle{true, udpConn, nil, nil, nil, uuid, false, nil, time.Now().Unix()})
 
 		// 收到内容后会开ws连接并拿到UDPAddr 阻塞
-		ReadTcp2Ws(uuid)
+		readTcp2Ws(uuid)
 	}
 
 }
@@ -489,7 +488,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 新线程hold住这条连接
-	go RunServer(conn)
+	go runServer(conn)
 }
 
 // 响应tcp
@@ -504,7 +503,7 @@ func tcpHandler(listener net.Listener) {
 		log.Print("new tcp conn: ")
 
 		// 新线程hold住这条连接
-		go RunClient(conn, uuid.New().String()[31:])
+		go runClient(conn, uuid.New().String()[31:])
 	}
 }
 
@@ -523,7 +522,7 @@ func startWsServer(listenPort string, isSsl bool, sslCrt string, sslKey string) 
 }
 
 // 又造轮子了 发现给v4的ip加个框也能连诶
-func Tcping(hostname, port string) int64 {
+func tcping(hostname, port string) int64 {
 	st := time.Now().UnixNano()
 	c, err := net.DialTimeout("tcp", "["+hostname+"]"+port, 5*time.Second)
 	if err != nil {
@@ -624,11 +623,11 @@ func main() {
 		if u.Host[0] == '[' {
 			// ipv6
 			wsAddrIp = "[" + u.Hostname() + "]"
-			log.Print("tcping "+u.Hostname()+" ", Tcping(u.Hostname(), wsAddrPort), "ms")
+			log.Print("tcping "+u.Hostname()+" ", tcping(u.Hostname(), wsAddrPort), "ms")
 		} else if match, _ = regexp.MatchString(`^\d+.\d+.\d+.\d+$`, u.Hostname()); match {
 			// ipv4
 			wsAddrIp = u.Hostname()
-			log.Print("tcping "+wsAddrIp+" ", Tcping(wsAddrIp, wsAddrPort), "ms")
+			log.Print("tcping "+wsAddrIp+" ", tcping(wsAddrIp, wsAddrPort), "ms")
 		} else {
 			// 域名，需要解析，ip优选
 			log.Print("nslookup " + u.Hostname())
@@ -653,7 +652,7 @@ func main() {
 			wsAddrIp = ns[0]
 			var lastPing int64 = 5000
 			for _, n := range ns {
-				nowPing := Tcping(n, wsAddrPort)
+				nowPing := tcping(n, wsAddrPort)
 				log.Print("tcping "+n+" ", nowPing, "ms")
 				if nowPing != -1 && nowPing < lastPing {
 					wsAddrIp = n
@@ -667,7 +666,7 @@ func main() {
 		go tcpHandler(l)
 
 		// 启动一个udp监听用于udp转发
-		go RunClientUdp(listenHostPort)
+		go runClientUdp(listenHostPort)
 
 		log.Print("Client Started " + listenHostPort + " -> " + wsAddr)
 	}
