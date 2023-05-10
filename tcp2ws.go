@@ -6,7 +6,6 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"log"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/miekg/dns"
 )
 
 type tcp2wsSparkle struct {
@@ -532,6 +532,62 @@ func tcping(hostname, port string) int64 {
 	return (time.Now().UnixNano() - st) / 1e6
 }
 
+// 优选ip
+func dnsPreferIp(hostname string) (string, uint32) {
+	log.Print("nslookup " + hostname)
+
+	tc := dns.Client{Net: "tcp", Timeout: 10 * time.Second}
+	uc := dns.Client{Net: "udp", Timeout: 10 * time.Second}
+	m := dns.Msg{}
+	m.SetQuestion(hostname+".", dns.TypeA)
+	r, _, err := uc.Exchange(&m, "127.0.0.1:53")
+	if err != nil {
+		log.Print("Local DNS Fail: ", err)
+		r, _, err = tc.Exchange(&m, "208.67.222.222:5353")
+		if err != nil {
+			log.Print("OpenDNS Fail: ", err)
+			return "", 0
+		}
+	}
+	if len(r.Answer) == 0 {
+		log.Print("Could not found NS records")
+		return "", 0
+	}
+
+	ip := ""
+	var ttl uint32 = 60
+	var lastPing int64 = 5000
+	for _, ans := range r.Answer {
+		if a, ok := ans.(*dns.A); ok {
+			nowPing := tcping(a.A.String(), wsAddrPort)
+			log.Print("tcping "+a.A.String()+" ", nowPing, "ms")
+			if nowPing != -1 && nowPing < lastPing {
+				ip = a.A.String()
+				ttl = ans.Header().Ttl
+				lastPing = nowPing
+			}
+		}
+	}
+	log.Print("Prefer IP " + ip + " for " + hostname)
+	return ip, ttl
+}
+
+// 根据dns ttl自动更新ip
+func dnsPreferIpWithTtl(hostname string, ttl uint32) {
+	log.Println("DNS TTL: ", ttl, "s")
+	ip := ""
+	for {
+		time.Sleep(time.Duration(ttl) * time.Second)
+		log.Println("Update IP for " + hostname)
+		ip, ttl = dnsPreferIp(hostname)
+		if ip != "" {
+			wsAddrIp = ip
+		} else {
+			log.Println("DNS Fail, Use Last IP: " + wsAddrIp)
+		}
+	}
+}
+
 func main() {
 	arg_num := len(os.Args)
 	if arg_num < 3 {
@@ -630,37 +686,13 @@ func main() {
 			log.Print("tcping "+wsAddrIp+" ", tcping(wsAddrIp, wsAddrPort), "ms")
 		} else {
 			// 域名，需要解析，ip优选
-			log.Print("nslookup " + u.Hostname())
-			ns, err := net.LookupHost(u.Hostname())
-			if err != nil {
-				log.Print("System DNS Fail: ", err)
-				// 在Android的Termux上似乎不能正确的使用系统DNS解析
-				r := &net.Resolver{
-					PreferGo: true,
-					Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-						d := net.Dialer{
-							Timeout: 5 * time.Second,
-						}
-						return d.DialContext(ctx, network, "208.67.222.222:5353")
-					},
-				}
-				ns, err = r.LookupHost(context.Background(), u.Hostname())
-				if err != nil {
-					log.Fatal("tcp2ws Client Start Error: ", err)
-				}
+			wsAddrIp, ttl := dnsPreferIp(u.Hostname())
+			if wsAddrIp == "" {
+				log.Fatal("tcp2ws Client Start Error: dns resolve error")
+			} else {
+				// 根据dns ttl自动更新ip
+				go dnsPreferIpWithTtl(u.Hostname(), ttl)
 			}
-			wsAddrIp = ns[0]
-			var lastPing int64 = 5000
-			for _, n := range ns {
-				nowPing := tcping(n, wsAddrPort)
-				log.Print("tcping "+n+" ", nowPing, "ms")
-				if nowPing != -1 && nowPing < lastPing {
-					wsAddrIp = n
-					lastPing = nowPing
-				}
-			}
-
-			log.Print("Use IP " + wsAddrIp + " for " + u.Hostname())
 		}
 
 		go tcpHandler(l)
