@@ -8,6 +8,7 @@ package main
 import (
 	"crypto/tls"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -534,6 +536,24 @@ func tcping(hostname, port string) int64 {
 
 // 优选ip
 func dnsPreferIp(hostname string) (string, uint32) {
+	// 由正则驱动的hosts解析器 此解析器拥有超咩力
+	hostsFile := "/etc/hosts"
+	if runtime.GOOS == "windows" {
+		hostsFile = os.Getenv("SystemRoot") + `\System32\drivers\etc\hosts`
+	}
+	hosts, err := ioutil.ReadFile(hostsFile)
+	if err == nil {
+		re := regexp.MustCompile(`(?m)^([0-9.]+).+[ \t](` + hostname + `$|` + hostname + ` .*)`)
+		matches := re.FindAllStringSubmatch(string(hosts), -1)
+		if len(matches) > 0 {
+			log.Print("Use System hosts: ", matches[0][1], " ", hostname)
+			return matches[0][1], 0
+		}
+	} else {
+		log.Print(`Read System hosts "`, hostsFile, `" error: `, err)
+	}
+
+	// 从dns获取
 	log.Print("nslookup " + hostname)
 
 	tc := dns.Client{Net: "tcp", Timeout: 10 * time.Second}
@@ -542,12 +562,14 @@ func dnsPreferIp(hostname string) (string, uint32) {
 	m.SetQuestion(hostname+".", dns.TypeA)
 	r, _, err := uc.Exchange(&m, "127.0.0.1:53")
 	if err != nil {
-		log.Print("Local DNS Fail: ", err)
+		// log.Print("Local DNS Fail: ", err)
 		r, _, err = tc.Exchange(&m, "208.67.222.222:5353")
 		if err != nil {
 			log.Print("OpenDNS Fail: ", err)
 			return "", 0
 		}
+	} else {
+		log.Print("Use Local DNS")
 	}
 	if len(r.Answer) == 0 {
 		log.Print("Could not found NS records")
@@ -689,7 +711,7 @@ func main() {
 			wsAddrIp, ttl := dnsPreferIp(u.Hostname())
 			if wsAddrIp == "" {
 				log.Fatal("tcp2ws Client Start Error: dns resolve error")
-			} else {
+			} else if ttl > 0 {
 				// 根据dns ttl自动更新ip
 				go dnsPreferIpWithTtl(u.Hostname(), ttl)
 			}
