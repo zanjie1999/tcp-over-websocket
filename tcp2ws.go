@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// 10.1
+// 10.2
 
 package main
 
@@ -560,7 +560,23 @@ func dnsPreferIp(hostname string) (string, uint32) {
 	uc := dns.Client{Net: "udp", Timeout: 10 * time.Second}
 	m := dns.Msg{}
 	m.SetQuestion(hostname+".", dns.TypeA)
-	r, _, err := uc.Exchange(&m, "127.0.0.1:53")
+
+	// 获取系统配置的dns 如果有就用它解析域名 windows咩咩不用不知道怎么写所以不支持
+	// 由正则驱动的resolv.conf解析器 此解析器拥有超咩力
+	systemDns := "127.0.0.1"
+	if runtime.GOOS != "windows" {
+		resolv, err := ioutil.ReadFile("/etc/resolv.conf")
+		if err == nil {
+			re := regexp.MustCompile(`(?m)^nameserver[ \t]+([0-9.]+).*`)
+			matches := re.FindAllStringSubmatch(string(resolv), -1)
+			if len(matches) > 0 {
+				systemDns = matches[0][1]
+			}
+		} else {
+			log.Print(`Read System resolv.conf "/etc/resolv.conf" error: `, err)
+		}
+	}
+	r, _, err := uc.Exchange(&m, systemDns+":53")
 	if err != nil {
 		// log.Print("Local DNS Fail: ", err)
 		r, _, err = tc.Exchange(&m, "208.67.222.222:5353")
@@ -569,7 +585,7 @@ func dnsPreferIp(hostname string) (string, uint32) {
 			return "", 0
 		}
 	} else {
-		log.Print("Use Local DNS")
+		log.Print("Use System DNS ", systemDns)
 	}
 	if len(r.Answer) == 0 {
 		log.Print("Could not found NS records")
@@ -596,14 +612,14 @@ func dnsPreferIp(hostname string) (string, uint32) {
 
 // 根据dns ttl自动更新ip
 func dnsPreferIpWithTtl(hostname string, ttl uint32) {
-	log.Println("DNS TTL: ", ttl, "s")
-	ip := ""
 	for {
+		log.Println("DNS TTL: ", ttl, "s")
 		time.Sleep(time.Duration(ttl) * time.Second)
 		log.Println("Update IP for " + hostname)
-		ip, ttl = dnsPreferIp(hostname)
+		ip, ttlNow := dnsPreferIp(hostname)
 		if ip != "" {
 			wsAddrIp = ip
+			ttl = ttlNow
 		} else {
 			log.Println("DNS Fail, Use Last IP: " + wsAddrIp)
 		}
@@ -613,7 +629,7 @@ func dnsPreferIpWithTtl(hostname string, ttl uint32) {
 func main() {
 	arg_num := len(os.Args)
 	if arg_num < 3 {
-		fmt.Println("TCP over WebSocket (tcp2ws) with UDP support 10.1\nhttps://github.com/zanjie1999/tcp-over-websocket")
+		fmt.Println("TCP over WebSocket (tcp2ws) with UDP support 10.2\nhttps://github.com/zanjie1999/tcp-over-websocket")
 		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nUse wss: ip:port tcp2wsPort server.crt server.key")
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)

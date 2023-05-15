@@ -1,6 +1,8 @@
 # Tcp over WebSocket (TCP to WebSocket, tcp2ws)
 本工具能 使用WebSocket创建隧道，实现TCP端口转发  
-在v9.0及以后 的版本支持了UDP，也就是说现在可以实现UDP端口转发了  
+在v6.0及以后的版本支持了wss，也就是说现在可以实现https ssl进行更安全的传输
+在v8.3及以后的版本支持了ip优选，会自动选择域名解析中最优的cdn ip进行连接  
+在v9.0及以后的版本支持了UDP，也就是说现在可以实现UDP端口转发了  
 也就是UDP over WebSocket (UDP to WebSocket, udp2ws) 并没有独立成新程序，写在一起了  
 启动时会同时转发指定的端口的TCP和UDP流量  
 
