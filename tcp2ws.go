@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// 10.2
+// 10.3
 
 package main
 
@@ -543,7 +543,7 @@ func dnsPreferIp(hostname string) (string, uint32) {
 	}
 	hosts, err := ioutil.ReadFile(hostsFile)
 	if err == nil {
-		re := regexp.MustCompile(`(?m)^([0-9.]+).+[ \t](` + hostname + `$|` + hostname + ` .*)`)
+		re := regexp.MustCompile(`(?m)^([0-9.]+).*[ \t](` + hostname + `$|` + hostname + ` .*)`)
 		matches := re.FindAllStringSubmatch(string(hosts), -1)
 		if len(matches) > 0 {
 			log.Print("Use System hosts: ", matches[0][1], " ", hostname)
@@ -629,7 +629,7 @@ func dnsPreferIpWithTtl(hostname string, ttl uint32) {
 func main() {
 	arg_num := len(os.Args)
 	if arg_num < 3 {
-		fmt.Println("TCP over WebSocket (tcp2ws) with UDP support 10.2\nhttps://github.com/zanjie1999/tcp-over-websocket")
+		fmt.Println("TCP over WebSocket (tcp2ws) with UDP support 10.3\nhttps://github.com/zanjie1999/tcp-over-websocket")
 		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nUse wss: ip:port tcp2wsPort server.crt server.key")
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
