@@ -1,7 +1,7 @@
 // Tcp over WebSocket (tcp2ws)
 // 基于ws的内网穿透工具
 // Sparkle 20210430
-// 10.3
+// 10.4
 
 package main
 
@@ -93,6 +93,7 @@ func dialNewWs(uuid string) bool {
 	log.Print("dial ", uuid)
 	// call ws
 	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment, NetDial: meDial}
+	// println("tcpAddr ", tcpAddr, " wsAddr ", wsAddr, " wsAddrIp ", wsAddrIp, " wsAddrPort ", wsAddrPort)
 	wsConn, _, err := dialer.Dial(wsAddr, nil)
 	if err != nil {
 		log.Print("connect to ws err: ", err)
@@ -629,7 +630,7 @@ func dnsPreferIpWithTtl(hostname string, ttl uint32) {
 func main() {
 	arg_num := len(os.Args)
 	if arg_num < 3 {
-		fmt.Println("TCP over WebSocket (tcp2ws) with UDP support 10.3\nhttps://github.com/zanjie1999/tcp-over-websocket")
+		fmt.Println("TCP over WebSocket (tcp2ws) with UDP support 10.4\nhttps://github.com/zanjie1999/tcp-over-websocket")
 		fmt.Println("Client: ws://tcp2wsUrl localPort\nServer: ip:port tcp2wsPort\nUse wss: ip:port tcp2wsPort server.crt server.key")
 		fmt.Println("Make ssl cert:\nopenssl genrsa -out server.key 2048\nopenssl ecparam -genkey -name secp384r1 -out server.key\nopenssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500")
 		os.Exit(0)
@@ -724,7 +725,8 @@ func main() {
 			log.Print("tcping "+wsAddrIp+" ", tcping(wsAddrIp, wsAddrPort), "ms")
 		} else {
 			// 域名，需要解析，ip优选
-			wsAddrIp, ttl := dnsPreferIp(u.Hostname())
+			var ttl uint32
+			wsAddrIp, ttl = dnsPreferIp(u.Hostname())
 			if wsAddrIp == "" {
 				log.Fatal("tcp2ws Client Start Error: dns resolve error")
 			} else if ttl > 0 {
