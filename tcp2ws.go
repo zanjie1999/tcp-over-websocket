@@ -123,7 +123,7 @@ func readTcp2Ws(uuid string) bool {
 		err := recover()
 		if err != nil {
 			log.Print(uuid, " tcp -> ws Boom!\n", err)
-			readTcp2Ws(uuid)
+			// readTcp2Ws(uuid)
 		}
 	}()
 
@@ -144,14 +144,11 @@ func readTcp2Ws(uuid string) bool {
 		if isUdp {
 			length, conn.udpAddr, err = udpConn.ReadFromUDP(buf)
 			// 客户端udp先收到内容再创建ws连接 服务端不可能进入这里
-			if conn.wsConn == nil {
+			if !isServer && conn.wsConn == nil {
+				log.Print("try reconnect to ws ", uuid)
 				if !dialNewWs(uuid) {
-					// ws连接失败 存起来 下次重试
-					if conn.buf == nil {
-						conn.buf = [][]byte{buf[:length]}
-					} else {
-						conn.buf = append(conn.buf, buf[:length])
-					}
+					// udp ws连接失败 存起来 下次重试
+					saveErrorBuf(conn, buf, length)
 					continue
 				}
 				go readWs2TcpClient(uuid, true)
@@ -182,20 +179,23 @@ func readTcp2Ws(uuid string) bool {
 				return false
 			}
 			wsConn := conn.wsConn
-			if wsConn == nil {
-				return false
-			}
 			conn.t = time.Now().Unix()
+			if wsConn == nil {
+				if isServer {
+					// 服务端退出等下次连上来
+					return false
+				}
+				// 客户端 tcp上次重连没有成功 保存并重连 服务端不会设置成nil不会进这里
+				saveErrorBuf(conn, buf, length)
+				log.Print("try reconnect to ws ", uuid)
+				go runClient(nil, uuid)
+				continue
+			}
 			if err = wsConn.WriteMessage(msgType, buf[:length]); err != nil {
 				log.Print(uuid, " ws write err: ", err)
 				// tcpConn.Close()
 				wsConn.Close()
-				// save send error buf
-				if conn.buf == nil {
-					conn.buf = [][]byte{buf[:length]}
-				} else {
-					conn.buf = append(conn.buf, buf[:length])
-				}
+				saveErrorBuf(conn, buf, length)
 				// 此处无需中断 等着新的wsConn 或是被 断开连接 / 回收 即可
 			}
 			// if !isServer {
@@ -211,7 +211,7 @@ func readWs2Tcp(uuid string) bool {
 		err := recover()
 		if err != nil {
 			log.Print(uuid, " ws -> tcp Boom!\n", err)
-			readWs2Tcp(uuid)
+			// readWs2Tcp(uuid)
 		}
 	}()
 
@@ -291,13 +291,13 @@ func readWs2TcpClient(uuid string, isUdp bool) {
 	if readWs2Tcp(uuid) {
 		log.Print(uuid, " ws Boom!")
 		// error return  re call ws
-		if !isUdp {
-			runClient(nil, uuid)
-		} else {
-			// 删除wsConn 下次收到udp数据时会重新建立ws连接
-			conn, haskey := getConn(uuid)
-			if haskey {
-				conn.wsConn = nil
+		conn, haskey := getConn(uuid)
+		if haskey {
+			// 删除wsConn
+			conn.wsConn = nil
+			if !isUdp {
+				// udp的话下次收到数据时会重新建立ws连接 tcp现在重连
+				runClient(nil, uuid)
 			}
 		}
 	}
@@ -310,6 +310,19 @@ func writeErrorBuf2Ws(conn *tcp2wsSparkle) {
 			conn.wsConn.WriteMessage(websocket.BinaryMessage, conn.buf[i])
 		}
 		conn.buf = nil
+	}
+}
+
+// 拷贝当前发生失败内容并保存
+func saveErrorBuf(conn *tcp2wsSparkle, buf []byte, length int) {
+	if conn != nil {
+		tmp := make([]byte, length)
+		copy(tmp, buf[:length])
+		if conn.buf == nil {
+			conn.buf = [][]byte{tmp}
+		} else {
+			conn.buf = append(conn.buf, tmp)
+		}
 	}
 }
 
@@ -405,8 +418,9 @@ func runClient(tcpConn net.Conn, uuid string) {
 		}
 	}()
 
-	// conn is close?
+	// is reconnect
 	if tcpConn == nil {
+		// conn is close?
 		if conn, haskey := getConn(uuid); haskey {
 			if conn.del {
 				return
@@ -414,17 +428,19 @@ func runClient(tcpConn net.Conn, uuid string) {
 		} else {
 			return
 		}
-	}
-	// save conn
-	if tcpConn != nil {
+	} else {
+		// save conn
 		setConn(uuid, &tcp2wsSparkle{false, nil, nil, tcpConn, nil, uuid, false, nil, time.Now().Unix()})
 	}
-	dialNewWs(uuid)
-
-	go readWs2TcpClient(uuid, false)
-	if tcpConn != nil {
-		// 不是重连
-		go readTcp2Ws(uuid)
+	if dialNewWs(uuid) {
+		// connect ok
+		go readWs2TcpClient(uuid, false)
+		if tcpConn != nil {
+			// 不是重连
+			go readTcp2Ws(uuid)
+		}
+	} else {
+		log.Print("reconnect to ws fail")
 	}
 }
 
