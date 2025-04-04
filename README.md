@@ -122,3 +122,10 @@ openssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500
 可以写一个`index.html`放到运行目录下来代替这个空白页面
 直接访问时就会显示这个文件的内容，伪装成一个非常普通的Web服务  
 推荐用一个叫SingleFile的插件可以把页面直接存成一个文件
+
+
+### 协议 咩License
+使用此项目视为您已阅读并同意遵守 [此LICENSE](https://github.com/zanjie1999/LICENSE)   
+Using this project is deemed to indicate that you have read and agreed to abide by [this LICENSE](https://github.com/zanjie1999/LICENSE)   
+
+
