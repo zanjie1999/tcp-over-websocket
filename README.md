@@ -42,6 +42,17 @@ UDP是不可靠的，所以在传输过程中可能会丢包，但是这个工�
 `tcp2ws wss://链接 本地监听端口`  
 `tcp2ws https://链接 本地监听端口`  
 
+另外客户端还能通过环境变量配置HTTP代理：  
+`ws://`使用`HTTP_PROXY`，`wss://`使用`HTTPS_PROXY`，`NO_PROXY`的地址不走代理  
+代理地址使用 `http://代理地址:端口` 格式
+例如：  
+```sh
+export HTTP_PROXY=http://127.0.0.1:1080
+export NO_PROXY=1.1.1.1,8.8.8.8
+tcp2ws ws://链接 本地监听端口
+```
+Windows下将`export`换成`set`设置环境变量  
+
 生成自签证书的方法（一路回车即可）：  
 ```
 openssl genrsa -out server.key 2048
@@ -131,5 +142,4 @@ openssl req -new -x509 -sha256 -key server.key -out server.crt -days 36500
 ### 协议 咩License
 使用此项目视为您已阅读并同意遵守 [此LICENSE](https://github.com/zanjie1999/LICENSE)   
 Using this project is deemed to indicate that you have read and agreed to abide by [this LICENSE](https://github.com/zanjie1999/LICENSE)   
-
 

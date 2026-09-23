@@ -6,7 +6,9 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -28,27 +30,49 @@ import (
 )
 
 type tcp2wsSparkle struct {
-	isUdp   bool
-	udpConn *net.UDPConn
-	udpAddr *net.UDPAddr
-	tcpConn net.Conn
-	wsConn  *websocket.Conn
-	uuid    string
-	del     bool
-	buf     [][]byte
-	t       int64
+	isUdp            bool
+	udpConn          *net.UDPConn
+	tcpConn          net.Conn
+	uuid             string
+	ctx              context.Context
+	cancel           context.CancelFunc
+	mu               sync.RWMutex
+	wsConn           *websocket.Conn
+	udpAddr          *net.UDPAddr
+	del              bool
+	t                int64
+	messageType      int
+	writeMu          sync.Mutex
+	buf              []queuedMessage
+	reconnectMu      sync.Mutex
+	reconnecting     bool
+	reconnectAuto    bool
+	reconnectPending bool
+	retryDelay       time.Duration
+	retryAt          time.Time
 }
+
+type queuedMessage struct {
+	messageType int
+	data        []byte
+}
+
+type wsDialFunc func(context.Context, string) (*websocket.Conn, error)
 
 var (
 	tcpAddr    string
 	wsAddr     string
 	wsAddrIp   string
-	wsAddrPort     = ""
-	msgType    int = websocket.BinaryMessage
+	wsAddrPort = ""
 	isServer   bool
 	connMap    map[string]*tcp2wsSparkle = make(map[string]*tcp2wsSparkle)
 	// go的map不是线程安全的 读写冲突就会直接exit
 	connMapLock *sync.RWMutex = new(sync.RWMutex)
+)
+
+var (
+	initialReconnectDelay = 250 * time.Millisecond
+	maxReconnectDelay     = 30 * time.Second
 )
 
 var upgrader = websocket.Upgrader{
@@ -70,267 +94,530 @@ func setConn(uuid string, conn *tcp2wsSparkle) {
 	connMap[uuid] = conn
 }
 
-func deleteConn(uuid string) {
-	if conn, haskey := getConn(uuid); haskey && conn != nil && !conn.del {
-		connMapLock.Lock()
-		defer connMapLock.Unlock()
-		conn.del = true
-		if conn.udpConn != nil {
-			conn.udpConn.Close()
-		}
-		if conn.tcpConn != nil {
-			conn.tcpConn.Close()
-		}
-		if conn.wsConn != nil {
-			log.Print(uuid, " bye")
-			conn.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
-			conn.wsConn.Close()
-		}
-		delete(connMap, uuid)
+func connMapSnapshot() map[string]*tcp2wsSparkle {
+	connMapLock.RLock()
+	defer connMapLock.RUnlock()
+
+	snapshot := make(map[string]*tcp2wsSparkle, len(connMap))
+	for uuid, conn := range connMap {
+		snapshot[uuid] = conn
+	}
+	return snapshot
+}
+
+func newTcp2wsSparkle(isUdp bool, udpConn *net.UDPConn, tcpConn net.Conn, wsConn *websocket.Conn, uuid string) *tcp2wsSparkle {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &tcp2wsSparkle{
+		isUdp:       isUdp,
+		udpConn:     udpConn,
+		tcpConn:     tcpConn,
+		wsConn:      wsConn,
+		uuid:        uuid,
+		ctx:         ctx,
+		cancel:      cancel,
+		t:           time.Now().Unix(),
+		messageType: websocket.BinaryMessage,
 	}
 }
 
-func dialNewWs(uuid string) bool {
-	log.Print("dial ", uuid)
-	// call ws
-	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment, NetDial: meDial}
-	// println("tcpAddr ", tcpAddr, " wsAddr ", wsAddr, " wsAddrIp ", wsAddrIp, " wsAddrPort ", wsAddrPort)
-	wsConn, _, err := dialer.Dial(wsAddr, nil)
-	if err != nil {
-		log.Print("connect to ws err: ", err)
+func (conn *tcp2wsSparkle) isDeleted() bool {
+	conn.mu.RLock()
+	defer conn.mu.RUnlock()
+	return conn.del
+}
+
+func (conn *tcp2wsSparkle) currentWS() *websocket.Conn {
+	conn.mu.RLock()
+	defer conn.mu.RUnlock()
+	return conn.wsConn
+}
+
+func (conn *tcp2wsSparkle) currentWSIs(wsConn *websocket.Conn) bool {
+	conn.mu.RLock()
+	defer conn.mu.RUnlock()
+	return !conn.del && conn.wsConn == wsConn
+}
+
+func (conn *tcp2wsSparkle) clearWSIfCurrent(wsConn *websocket.Conn) bool {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	if conn.del || conn.wsConn != wsConn {
 		return false
 	}
-	// send uuid
-	if err := wsConn.WriteMessage(websocket.TextMessage, []byte(uuid)); err != nil {
-		log.Print("udp send ws uuid err: ", err)
-		wsConn.Close()
-		return false
-	}
-	// update
-	if conn, haskey := getConn(uuid); haskey {
-		if conn.wsConn != nil {
-			conn.wsConn.Close()
-		}
-		conn.wsConn = wsConn
-		conn.t = time.Now().Unix()
-		writeErrorBuf2Ws(conn)
-	}
+	conn.wsConn = nil
 	return true
 }
 
-// 将tcp或udp的数据转发到ws
+func (conn *tcp2wsSparkle) updateActivity() {
+	conn.mu.Lock()
+	conn.t = time.Now().Unix()
+	conn.mu.Unlock()
+}
+
+func (conn *tcp2wsSparkle) lastActivity() int64 {
+	conn.mu.RLock()
+	defer conn.mu.RUnlock()
+	return conn.t
+}
+
+func (conn *tcp2wsSparkle) setUDPAddr(addr *net.UDPAddr) {
+	conn.mu.Lock()
+	conn.udpAddr = addr
+	conn.mu.Unlock()
+}
+
+func (conn *tcp2wsSparkle) currentUDPAddr() *net.UDPAddr {
+	conn.mu.RLock()
+	defer conn.mu.RUnlock()
+	if conn.udpAddr == nil {
+		return nil
+	}
+	addr := *conn.udpAddr
+	return &addr
+}
+
+func (conn *tcp2wsSparkle) setMessageType(messageType int) {
+	conn.mu.Lock()
+	conn.messageType = messageType
+	conn.mu.Unlock()
+}
+
+func (conn *tcp2wsSparkle) currentMessageType() int {
+	conn.mu.RLock()
+	defer conn.mu.RUnlock()
+	return conn.messageType
+}
+
+func deleteConn(uuid string) {
+	if conn, haskey := getConn(uuid); haskey && conn != nil {
+		removeConn(uuid, conn, true)
+	}
+}
+
+func removeConn(uuid string, expected *tcp2wsSparkle, sendClose bool) {
+	removeConnIfWS(uuid, expected, nil, sendClose)
+}
+
+func removeConnIfWS(uuid string, expected *tcp2wsSparkle, expectedWS *websocket.Conn, sendClose bool) {
+	if expected == nil {
+		return
+	}
+
+	expected.writeMu.Lock()
+	if expectedWS != nil && !expected.currentWSIs(expectedWS) {
+		expected.writeMu.Unlock()
+		return
+	}
+	connMapLock.Lock()
+	if connMap[uuid] != expected {
+		connMapLock.Unlock()
+		expected.writeMu.Unlock()
+		return
+	}
+	delete(connMap, uuid)
+	connMapLock.Unlock()
+
+	expected.mu.Lock()
+	if expected.del {
+		expected.mu.Unlock()
+		expected.writeMu.Unlock()
+		return
+	}
+	expected.del = true
+	wsConn := expected.wsConn
+	expected.wsConn = nil
+	expected.mu.Unlock()
+	expected.cancel()
+
+	if wsConn != nil {
+		if sendClose {
+			log.Print(uuid, " bye")
+			_ = wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
+		}
+		_ = wsConn.Close()
+	}
+	expected.writeMu.Unlock()
+
+	if expected.udpConn != nil {
+		_ = expected.udpConn.Close()
+	}
+	if expected.tcpConn != nil {
+		_ = expected.tcpConn.Close()
+	}
+}
+
+func dialNewWs(ctx context.Context, uuid string) (*websocket.Conn, error) {
+	log.Print("dial ", uuid)
+	proxySelected := false
+	dialer := websocket.Dialer{
+		TLSClientConfig: &tls.Config{RootCAs: nil, InsecureSkipVerify: true},
+		Proxy: func(request *http.Request) (*url.URL, error) {
+			proxyURL, err := http.ProxyFromEnvironment(request)
+			proxySelected = proxyURL != nil
+			return proxyURL, err
+		},
+		NetDialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if proxySelected {
+				return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, address)
+			}
+			return meDialContext(ctx, network, address)
+		},
+	}
+	wsConn, _, err := dialer.DialContext(ctx, wsAddr, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := wsConn.WriteMessage(websocket.TextMessage, []byte(uuid)); err != nil {
+		_ = wsConn.Close()
+		return nil, err
+	}
+	return wsConn, nil
+}
+
+func preferredIPDialAddress(address, wsURL, preferredIP string) string {
+	if preferredIP == "" {
+		return address
+	}
+	parsedURL, err := url.Parse(wsURL)
+	if err != nil {
+		return address
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || !strings.EqualFold(host, parsedURL.Hostname()) {
+		return address
+	}
+	originPort := parsedURL.Port()
+	if originPort == "" {
+		if parsedURL.Scheme == "wss" || parsedURL.Scheme == "https" {
+			originPort = "443"
+		} else {
+			originPort = "80"
+		}
+	}
+	if port != originPort {
+		return address
+	}
+	return net.JoinHostPort(strings.Trim(preferredIP, "[]"), port)
+}
+
+func startReconnect(conn *tcp2wsSparkle, autoRetry bool, dial wsDialFunc) {
+	if conn == nil || conn.isDeleted() || conn.currentWS() != nil {
+		return
+	}
+	conn.reconnectMu.Lock()
+	if conn.reconnecting {
+		if autoRetry {
+			conn.reconnectAuto = true
+		} else {
+			conn.reconnectPending = true
+		}
+		conn.reconnectMu.Unlock()
+		return
+	}
+	if time.Now().Before(conn.retryAt) {
+		conn.reconnectMu.Unlock()
+		return
+	}
+	conn.reconnecting = true
+	conn.reconnectAuto = autoRetry
+	conn.reconnectPending = false
+	conn.reconnectMu.Unlock()
+	go reconnectLoop(conn, dial)
+}
+
+func requestReconnect(conn *tcp2wsSparkle, autoRetry bool) {
+	startReconnect(conn, autoRetry, dialNewWs)
+}
+
+func reconnectLoop(conn *tcp2wsSparkle, dial wsDialFunc) {
+	for {
+		if conn.isDeleted() {
+			finishReconnect(conn)
+			return
+		}
+		wsConn, err := dial(conn.ctx, conn.uuid)
+		if err == nil {
+			err = installWS(conn, wsConn)
+			if err == nil {
+				conn.reconnectMu.Lock()
+				conn.retryDelay = 0
+				conn.retryAt = time.Time{}
+				conn.reconnecting = false
+				conn.reconnectAuto = false
+				conn.reconnectPending = false
+				conn.reconnectMu.Unlock()
+				go readWs2TcpClient(conn, wsConn)
+				return
+			}
+			if wsConn != nil {
+				_ = wsConn.Close()
+			}
+		}
+		if conn.isDeleted() {
+			finishReconnect(conn)
+			return
+		}
+		if err != nil {
+			log.Print("connect to ws err: ", err)
+		} else {
+			log.Print("reconnect ws write err: ", err)
+		}
+
+		delay := conn.nextReconnectDelay()
+		conn.reconnectMu.Lock()
+		autoRetry := conn.reconnectAuto
+		pending := conn.reconnectPending
+		conn.reconnectPending = false
+		if !autoRetry && !pending {
+			conn.reconnecting = false
+			conn.reconnectAuto = false
+			conn.reconnectPending = false
+		}
+		conn.reconnectMu.Unlock()
+		if !autoRetry && !pending {
+			return
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-conn.ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			finishReconnect(conn)
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+func finishReconnect(conn *tcp2wsSparkle) {
+	conn.reconnectMu.Lock()
+	conn.reconnecting = false
+	conn.reconnectAuto = false
+	conn.reconnectPending = false
+	conn.reconnectMu.Unlock()
+}
+
+func (conn *tcp2wsSparkle) nextReconnectDelay() time.Duration {
+	conn.reconnectMu.Lock()
+	defer conn.reconnectMu.Unlock()
+	delay := conn.retryDelay
+	if delay == 0 {
+		delay = initialReconnectDelay
+	}
+	nextDelay := delay * 2
+	if nextDelay > maxReconnectDelay {
+		nextDelay = maxReconnectDelay
+	}
+	conn.retryDelay = nextDelay
+	conn.retryAt = time.Now().Add(delay)
+	return delay
+}
+
+func installWS(conn *tcp2wsSparkle, wsConn *websocket.Conn) error {
+	conn.writeMu.Lock()
+	defer conn.writeMu.Unlock()
+	if conn.isDeleted() {
+		return errors.New("connection is closed")
+	}
+
+	conn.mu.Lock()
+	oldWS := conn.wsConn
+	conn.wsConn = wsConn
+	conn.t = time.Now().Unix()
+	conn.mu.Unlock()
+	if oldWS != nil && oldWS != wsConn {
+		_ = oldWS.Close()
+	}
+
+	for index, message := range conn.buf {
+		if err := wsConn.WriteMessage(message.messageType, message.data); err != nil {
+			conn.buf = conn.buf[index:]
+			conn.clearWSIfCurrent(wsConn)
+			_ = wsConn.Close()
+			return err
+		}
+	}
+	conn.buf = nil
+	return nil
+}
+
+func writeWS(conn *tcp2wsSparkle, messageType int, data []byte) error {
+	conn.writeMu.Lock()
+	defer conn.writeMu.Unlock()
+	if conn.isDeleted() {
+		return errors.New("connection is closed")
+	}
+	wsConn := conn.currentWS()
+	if wsConn == nil {
+		return errors.New("websocket is not connected")
+	}
+	if err := wsConn.WriteMessage(messageType, data); err != nil {
+		return err
+	}
+	conn.updateActivity()
+	return nil
+}
+
+func sendPayload(conn *tcp2wsSparkle, messageType int, data []byte) bool {
+	if len(data) == 0 {
+		return true
+	}
+	message := queuedMessage{messageType: messageType, data: append([]byte(nil), data...)}
+	queued := false
+	conn.writeMu.Lock()
+	if conn.isDeleted() {
+		conn.writeMu.Unlock()
+		return false
+	}
+	wsConn := conn.currentWS()
+	if wsConn == nil {
+		conn.buf = append(conn.buf, message)
+		queued = true
+	} else if err := wsConn.WriteMessage(message.messageType, message.data); err != nil {
+		log.Print(conn.uuid, " ws write err: ", err)
+		conn.buf = append(conn.buf, message)
+		if !isServer {
+			conn.clearWSIfCurrent(wsConn)
+		}
+		_ = wsConn.Close()
+		queued = true
+	} else {
+		conn.updateActivity()
+	}
+	conn.writeMu.Unlock()
+
+	if queued && !isServer {
+		requestReconnect(conn, !conn.isUdp)
+	}
+	return !conn.isDeleted()
+}
+
 func readTcp2Ws(uuid string) bool {
 	defer func() {
-		err := recover()
-		if err != nil {
+		if err := recover(); err != nil {
 			log.Print(uuid, " tcp -> ws Boom!\n", err)
-			// readTcp2Ws(uuid)
 		}
 	}()
 
 	conn, haskey := getConn(uuid)
-	if !haskey {
+	if !haskey || conn == nil {
 		return false
 	}
 	buf := make([]byte, 500000)
-	tcpConn := conn.tcpConn
-	udpConn := conn.udpConn
-	isUdp := conn.isUdp
-	for {
-		if conn.del || !isUdp && tcpConn == nil || isUdp && udpConn == nil {
-			return false
-		}
+	for !conn.isDeleted() {
 		var length int
 		var err error
-		if isUdp {
-			length, conn.udpAddr, err = udpConn.ReadFromUDP(buf)
-			// 客户端udp先收到内容再创建ws连接 服务端不可能进入这里
-			if !isServer && conn.wsConn == nil {
-				log.Print("try reconnect to ws ", uuid)
-				if !dialNewWs(uuid) {
-					// udp ws连接失败 存起来 下次重试
-					saveErrorBuf(conn, buf, length)
-					continue
-				}
-				go readWs2TcpClient(uuid, true)
+		if conn.isUdp {
+			var udpAddr *net.UDPAddr
+			length, udpAddr, err = conn.udpConn.ReadFromUDP(buf)
+			if err == nil {
+				conn.setUDPAddr(udpAddr)
 			}
 		} else {
-			length, err = tcpConn.Read(buf)
+			length, err = conn.tcpConn.Read(buf)
 		}
 		if err != nil {
-			if conn, haskey := getConn(uuid); haskey && !conn.del {
-				// tcp中断 关闭所有连接 关过的就不用关了
+			if !conn.isDeleted() {
 				if err.Error() != "EOF" {
-					if isUdp {
+					if conn.isUdp {
 						log.Print(uuid, " udp read err: ", err)
 					} else {
 						log.Print(uuid, " tcp read err: ", err)
 					}
 				}
-				deleteConn(uuid)
-				return false
+				removeConn(uuid, conn, true)
 			}
 			return false
 		}
-		// log.Print(uuid, " ws send: ", length)
-		if length > 0 {
-			// 因为tcpConn.Read会阻塞 所以要从connMap中获取最新的wsConn
-			conn, haskey := getConn(uuid)
-			if !haskey || conn.del {
-				return false
-			}
-			wsConn := conn.wsConn
-			conn.t = time.Now().Unix()
-			if wsConn == nil {
-				if isServer {
-					// 服务端退出等下次连上来
-					return false
-				}
-				// 客户端 tcp上次重连没有成功 保存并重连 服务端不会设置成nil不会进这里
-				saveErrorBuf(conn, buf, length)
-				log.Print("try reconnect to ws ", uuid)
-				go runClient(nil, uuid)
-				continue
-			}
-			if err = wsConn.WriteMessage(msgType, buf[:length]); err != nil {
-				log.Print(uuid, " ws write err: ", err)
-				// tcpConn.Close()
-				wsConn.Close()
-				saveErrorBuf(conn, buf, length)
-				// 此处无需中断 等着新的wsConn 或是被 断开连接 / 回收 即可
-			}
-			// if !isServer {
-			// 	log.Print(uuid, " send: ", length)
-			// }
+		if length > 0 && !sendPayload(conn, conn.currentMessageType(), buf[:length]) {
+			return false
 		}
 	}
+	return false
 }
 
-// 将ws的数据转发到tcp或udp
-func readWs2Tcp(uuid string) bool {
+func readWs2Tcp(conn *tcp2wsSparkle, wsConn *websocket.Conn) bool {
 	defer func() {
-		err := recover()
-		if err != nil {
-			log.Print(uuid, " ws -> tcp Boom!\n", err)
-			// readWs2Tcp(uuid)
+		if err := recover(); err != nil {
+			log.Print(conn.uuid, " ws -> tcp Boom!\n", err)
 		}
 	}()
-
-	conn, haskey := getConn(uuid)
-	if !haskey {
+	if conn == nil || wsConn == nil {
 		return false
 	}
-	wsConn := conn.wsConn
-	tcpConn := conn.tcpConn
-	udpConn := conn.udpConn
-	isUdp := conn.isUdp
-	for {
-		if conn.del || !isUdp && tcpConn == nil || isUdp && udpConn == nil || wsConn == nil {
-			return false
-		}
-		t, buf, err := wsConn.ReadMessage()
-		if err != nil || t == -1 {
-			wsConn.Close()
-			if conn, haskey := getConn(uuid); haskey && !conn.del {
-				// 外部干涉导致中断 重连ws
-				log.Print(uuid, " ws read err: ", err)
+
+	for !conn.isDeleted() && conn.currentWSIs(wsConn) {
+		messageType, data, err := wsConn.ReadMessage()
+		if err != nil || messageType == -1 {
+			_ = wsConn.Close()
+			if conn.currentWSIs(wsConn) {
+				log.Print(conn.uuid, " ws read err: ", err)
 				return true
 			}
 			return false
 		}
-		// log.Print(uuid, " ws recv: ", len(buf))
-		if len(buf) > 0 {
-			conn.t = time.Now().Unix()
-			if t == websocket.TextMessage {
-				msg := string(buf)
-				if msg == "tcp2wsSparkle" {
-					log.Print(uuid, " 咩")
-					continue
-				} else if msg == "tcp2wsSparkleClose" {
-					log.Print(uuid, " say bye")
-					connMapLock.Lock()
-					defer connMapLock.Unlock()
-					wsConn.Close()
-					if isUdp {
-						udpConn.Close()
-					} else {
-						tcpConn.Close()
-					}
-					delete(connMap, uuid)
-					return false
-				}
+		if !conn.currentWSIs(wsConn) {
+			return false
+		}
+		if len(data) == 0 {
+			continue
+		}
+		conn.updateActivity()
+		if messageType == websocket.TextMessage {
+			message := string(data)
+			if message == "tcp2wsSparkle" {
+				log.Print(conn.uuid, " 咩")
+				continue
 			}
-			msgType = t
-			if isUdp {
-				if isServer {
-					if _, err = udpConn.Write(buf); err != nil {
-						log.Print(uuid, " udp write err: ", err)
-						deleteConn(uuid)
-						return false
-					}
-				} else {
-					// 客户端作为udp服务端回复需要udp客户端发送数据时提供的udpAddr
-					if _, err = udpConn.WriteToUDP(buf, conn.udpAddr); err != nil {
-						log.Print(uuid, " udp write err: ", err)
-						deleteConn(uuid)
-						return false
-					}
-				}
+			if message == "tcp2wsSparkleClose" {
+				log.Print(conn.uuid, " say bye")
+				removeConnIfWS(conn.uuid, conn, wsConn, false)
+				return false
+			}
+		}
+		conn.setMessageType(messageType)
+		var writeErr error
+		if conn.isUdp {
+			if isServer {
+				_, writeErr = conn.udpConn.Write(data)
+			} else if udpAddr := conn.currentUDPAddr(); udpAddr != nil {
+				_, writeErr = conn.udpConn.WriteToUDP(data, udpAddr)
 			} else {
-				if _, err = tcpConn.Write(buf); err != nil {
-					log.Print(uuid, " tcp write err: ", err)
-					deleteConn(uuid)
-					return false
-				}
+				continue
 			}
-		}
-	}
-}
-
-// 多了一个被动断开后自动重连的功能
-func readWs2TcpClient(uuid string, isUdp bool) {
-	if readWs2Tcp(uuid) {
-		log.Print(uuid, " ws Boom!")
-		// error return  re call ws
-		conn, haskey := getConn(uuid)
-		if haskey {
-			// 删除wsConn
-			conn.wsConn = nil
-			if !isUdp {
-				// udp的话下次收到数据时会重新建立ws连接 tcp现在重连
-				runClient(nil, uuid)
-			}
-		}
-	}
-}
-
-// 将没写成的内容写到ws
-func writeErrorBuf2Ws(conn *tcp2wsSparkle) {
-	if conn != nil {
-		for i := 0; i < len(conn.buf); i++ {
-			conn.wsConn.WriteMessage(websocket.BinaryMessage, conn.buf[i])
-		}
-		conn.buf = nil
-	}
-}
-
-// 拷贝当前发生失败内容并保存
-func saveErrorBuf(conn *tcp2wsSparkle, buf []byte, length int) {
-	if conn != nil {
-		tmp := make([]byte, length)
-		copy(tmp, buf[:length])
-		if conn.buf == nil {
-			conn.buf = [][]byte{tmp}
 		} else {
-			conn.buf = append(conn.buf, tmp)
+			_, writeErr = conn.tcpConn.Write(data)
+		}
+		if writeErr != nil {
+			log.Print(conn.uuid, " backend write err: ", writeErr)
+			removeConnIfWS(conn.uuid, conn, wsConn, true)
+			return false
+		}
+	}
+	return false
+}
+
+func readWs2TcpClient(conn *tcp2wsSparkle, wsConn *websocket.Conn) {
+	if readWs2Tcp(conn, wsConn) && conn.clearWSIfCurrent(wsConn) {
+		log.Print(conn.uuid, " ws Boom!")
+		if !conn.isUdp {
+			requestReconnect(conn, true)
 		}
 	}
 }
 
 // 自定义的Dial连接器，自定义域名解析
 func meDial(network, address string) (net.Conn, error) {
-	// return net.DialTimeout(network, address, 5 * time.Second)
-	return net.DialTimeout(network, wsAddrIp+wsAddrPort, 5*time.Second)
+	return net.DialTimeout(network, preferredIPDialAddress(address, wsAddr, wsAddrIp), 5*time.Second)
+}
+
+func meDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	address = preferredIPDialAddress(address, wsAddr, wsAddrIp)
+	return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, address)
 }
 
 // 服务端 是tcp还是udp连接是客户端发过来的
@@ -343,14 +630,12 @@ func runServer(wsConn *websocket.Conn) {
 	}()
 
 	var isUdp bool
-	var udpConn *net.UDPConn
-	var tcpConn net.Conn
 	var uuid string
 	// read uuid to get from connMap
 	t, buf, err := wsConn.ReadMessage()
 	if err != nil || t == -1 || len(buf) == 0 {
 		log.Print("ws uuid read err: ", err)
-		wsConn.Close()
+		_ = wsConn.Close()
 		return
 	}
 	if t == websocket.TextMessage {
@@ -362,17 +647,24 @@ func runServer(wsConn *websocket.Conn) {
 		// U 开头的uuid为udp连接
 		isUdp = strings.HasPrefix(uuid, "U")
 		if conn, haskey := getConn(uuid); haskey {
-			// get
-			udpConn = conn.udpConn
-			tcpConn = conn.tcpConn
-			conn.wsConn.Close()
-			conn.wsConn = wsConn
-			writeErrorBuf2Ws(conn)
+			if err := installWS(conn, wsConn); err != nil {
+				log.Print("replace ws conn err: ", err)
+				_ = wsConn.Close()
+				return
+			}
+			log.Print("uuid finded ", uuid)
+			go readWs2Tcp(conn, wsConn)
+			return
 		}
+	}
+	if t != websocket.TextMessage || uuid == "" {
+		log.Print("ws uuid message invalid")
+		_ = wsConn.Close()
+		return
 	}
 
 	// uuid没有找到 新连接
-	if isUdp && udpConn == nil {
+	if isUdp {
 		// call new udp
 		log.Print("new udp for ", uuid)
 		udpAddr, err := net.ResolveUDPAddr("udp4", tcpAddr)
@@ -380,38 +672,39 @@ func runServer(wsConn *websocket.Conn) {
 			log.Print("resolve udp addr err: ", err)
 			return
 		}
-		udpConn, err = net.DialUDP("udp", nil, udpAddr)
+		udpConn, err := net.DialUDP("udp", nil, udpAddr)
 		if err != nil {
 			log.Print("connect to udp err: ", err)
-			wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
-			wsConn.Close()
+			_ = wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
+			_ = wsConn.Close()
 			return
 		}
 
 		// save
-		setConn(uuid, &tcp2wsSparkle{true, udpConn, nil, nil, wsConn, uuid, false, nil, time.Now().Unix()})
-
-		go readTcp2Ws(uuid)
-	} else if !isUdp && tcpConn == nil {
-		// call new tcp
-		log.Print("new tcp for ", uuid)
-		tcpConn, err = net.Dial("tcp", tcpAddr)
-		if err != nil {
-			log.Print("connect to tcp err: ", err)
-			wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
-			wsConn.Close()
-			return
-		}
-
-		// save
-		setConn(uuid, &tcp2wsSparkle{false, nil, nil, tcpConn, wsConn, uuid, false, nil, time.Now().Unix()})
+		conn := newTcp2wsSparkle(true, udpConn, nil, wsConn, uuid)
+		setConn(uuid, conn)
 
 		go readTcp2Ws(uuid)
 	} else {
-		log.Print("uuid finded ", uuid)
+		// call new tcp
+		log.Print("new tcp for ", uuid)
+		tcpConn, err := net.Dial("tcp", tcpAddr)
+		if err != nil {
+			log.Print("connect to tcp err: ", err)
+			_ = wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkleClose"))
+			_ = wsConn.Close()
+			return
+		}
+
+		// save
+		conn := newTcp2wsSparkle(false, nil, tcpConn, wsConn, uuid)
+		setConn(uuid, conn)
+
+		go readTcp2Ws(uuid)
 	}
 
-	go readWs2Tcp(uuid)
+	conn, _ := getConn(uuid)
+	go readWs2Tcp(conn, wsConn)
 }
 
 // tcp客户端
@@ -423,30 +716,13 @@ func runClient(tcpConn net.Conn, uuid string) {
 		}
 	}()
 
-	// is reconnect
 	if tcpConn == nil {
-		// conn is close?
-		if conn, haskey := getConn(uuid); haskey {
-			if conn.del {
-				return
-			}
-		} else {
-			return
-		}
-	} else {
-		// save conn
-		setConn(uuid, &tcp2wsSparkle{false, nil, nil, tcpConn, nil, uuid, false, nil, time.Now().Unix()})
+		return
 	}
-	if dialNewWs(uuid) {
-		// connect ok
-		go readWs2TcpClient(uuid, false)
-		if tcpConn != nil {
-			// 不是重连
-			go readTcp2Ws(uuid)
-		}
-	} else {
-		log.Print("reconnect to ws fail")
-	}
+	conn := newTcp2wsSparkle(false, nil, tcpConn, nil, uuid)
+	setConn(uuid, conn)
+	go readTcp2Ws(uuid)
+	requestReconnect(conn, true)
 }
 
 // udp客户端
@@ -473,7 +749,7 @@ func runClientUdp(listenHostPort string) {
 		}
 
 		// save
-		setConn(uuid, &tcp2wsSparkle{true, udpConn, nil, nil, nil, uuid, false, nil, time.Now().Unix()})
+		setConn(uuid, newTcp2wsSparkle(true, udpConn, nil, nil, uuid))
 
 		// 收到内容后会开ws连接并拿到UDPAddr 阻塞
 		readTcp2Ws(uuid)
@@ -795,16 +1071,15 @@ func main() {
 			time.Sleep(2 * 60 * time.Second)
 			nowTimeCut := time.Now().Unix() - 2*60
 			// check ws
-			for k, i := range connMap {
+			for k, i := range connMapSnapshot() {
 				// 如果超过2分钟没有收到消息，才发心跳，避免读写冲突
-				if i.t < nowTimeCut {
+				if i.lastActivity() < nowTimeCut {
 					if i.isUdp {
 						// udp不需要心跳 超时就关闭
 						log.Print(i.uuid, " udp timeout close")
 						deleteConn(k)
-					} else if err := i.wsConn.WriteMessage(websocket.TextMessage, []byte("tcp2wsSparkle")); err != nil {
+					} else if err := writeWS(i, websocket.TextMessage, []byte("tcp2wsSparkle")); err != nil {
 						log.Print(i.uuid, " tcp timeout close")
-						i.wsConn.Close()
 						deleteConn(k)
 					}
 				}
@@ -816,7 +1091,7 @@ func main() {
 			<-c
 			fmt.Println()
 			log.Print("quit...")
-			for k, _ := range connMap {
+			for k := range connMapSnapshot() {
 				deleteConn(k)
 			}
 			os.Exit(0)
